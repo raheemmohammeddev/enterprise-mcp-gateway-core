@@ -108,17 +108,11 @@ def neo4j_get_schema(instance: Optional[str] = None) -> Dict[str, Any]:
     Returns:
         Dict with node labels, relationship types, and property keys.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="neo4j_get_schema",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block
@@ -163,17 +157,11 @@ def neo4j_validate_query(query: str) -> Dict[str, Any]:
     Returns:
         Dict with validation result.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="neo4j_validate_query",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block
@@ -196,17 +184,11 @@ def neo4j_run_query(query: str, limit: int = _DEFAULT_LIMIT) -> Dict[str, Any]:
     Returns:
         Dict with query results as a list of record dicts.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="neo4j_run_query",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block

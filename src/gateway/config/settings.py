@@ -112,6 +112,11 @@ KIRO_RBAC_ENABLED: bool = _bool("KIRO_RBAC_ENABLED", True)
 # auto-whitelist path additionally requires an unproxied loopback client
 # address (no X-Forwarded-For / Forwarded headers).
 GATEWAY_ALLOW_INSECURE_LOCAL: bool = _bool("GATEWAY_ALLOW_INSECURE_LOCAL", False)
+# Opt-in trust for a local stdio caller. The stdio transport runs without
+# AuthMiddleware, so such a caller has no identity; setting this true grants it
+# unrestricted tool and project scope. It must stay false for any HTTP
+# deployment, where an identity is always available.
+GATEWAY_STDIO_TRUST_LOCAL: bool = _bool("GATEWAY_STDIO_TRUST_LOCAL", False)
 KIRO_TOKEN_TTL_HOURS: int = _int("KIRO_TOKEN_TTL_HOURS", 24)
 KIRO_TOKEN_ISSUER: str = os.getenv("KIRO_TOKEN_ISSUER", "enterprise-mcp-gateway")
 KIRO_TOKEN_AUDIENCE: str = os.getenv("KIRO_TOKEN_AUDIENCE", "kiro-mcp")

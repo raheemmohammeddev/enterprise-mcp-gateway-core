@@ -152,6 +152,7 @@ enterprise-mcp-gateway-core/
 | `JWT_CLAIM_GROUPS` | `groups,roles` | Candidate claim keys for group membership |
 | `KIRO_RBAC_ENABLED` | `true` | Require a gateway-signed token for IDE consumers |
 | `GATEWAY_ALLOW_INSECURE_LOCAL` | `false` | Opt-in escape hatch for the legacy auto-whitelist. Also requires `KIRO_RBAC_ENABLED=false` and a loopback client |
+| `GATEWAY_STDIO_TRUST_LOCAL` | `false` | Grant a local stdio caller (no AuthMiddleware, therefore no identity) unrestricted tool and project scope. Keep false for any HTTP deployment |
 | `KIRO_TOKEN_TTL_HOURS` | `24` | Kiro token expiry in hours |
 
 The token validator is fail-closed and the configuration check runs on every
@@ -223,6 +224,14 @@ HTTP 401.
 ```
 X-MCP-App-Name: kiro-local
 ```
+
+### stdio transport
+`AuthMiddleware` only runs on the HTTP transport, so a tool call arriving over
+stdio carries no caller identity. The absence of an identity is not a grant:
+such calls are denied by the tool authorization guardrail (`forbidden` /
+`tool_authorization`) unless `GATEWAY_STDIO_TRUST_LOCAL=true` is set, which
+grants the local caller unrestricted tool and project scope and logs a warning
+on every call.
 
 ---
 

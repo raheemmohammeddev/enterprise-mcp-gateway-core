@@ -202,18 +202,11 @@ def teradata_read_query(sql: str, row_limit: int = 1000) -> Dict[str, Any]:
     Returns:
         Dict with query results.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="teradata_read_query",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
-        sql=sql,
+        **caller_guardrail_scope(sql=sql),
     )
     if block:
         return block
@@ -230,17 +223,11 @@ def teradata_read_query(sql: str, row_limit: int = 1000) -> Dict[str, Any]:
 @rate_limited
 def teradata_list_databases() -> Dict[str, Any]:
     """List available Teradata databases."""
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="teradata_list_databases",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block
@@ -264,17 +251,11 @@ def teradata_list_tables(database: str) -> Dict[str, Any]:
     Returns:
         Dict with table list.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="teradata_list_tables",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block

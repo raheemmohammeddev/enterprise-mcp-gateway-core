@@ -4,7 +4,8 @@ Enterprise MCP Gateway - Application Entry Point.
 Starlette/ASGI server setup mounting the FastMCP HTTP app at /mcp.
 Stateless HTTP is requested via http_app(stateless_http=...) (FastMCP 3.x API).
 Supports two transport modes:
-    - stdio: Local IDE clients (Kiro, Claude Desktop). No auth required.
+    - stdio: Local IDE clients (Kiro, Claude Desktop). No AuthMiddleware runs,
+      so tool calls are denied unless GATEWAY_STDIO_TRUST_LOCAL=true.
     - streamable-http: Service-to-service over HTTPS with AuthMiddleware.
 
 Usage:
@@ -24,7 +25,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from gateway.config.settings import LOG_LEVEL, MCP_SERVER_PORT
+from gateway.config.settings import (
+    GATEWAY_STDIO_TRUST_LOCAL,
+    LOG_LEVEL,
+    MCP_SERVER_PORT,
+)
 from gateway.middleware.auth import AuthMiddleware
 
 logger = logging.getLogger("enterprise-mcp-gateway")
@@ -161,17 +166,11 @@ def _register_tools(mcp: object) -> None:
     @mcp.tool()  # type: ignore[attr-defined]
     def health_status() -> dict:
         """Gateway health and backend connectivity status."""
-        from gateway.guardrails.pipeline import enforce_guardrails
-        from gateway.middleware.auth import get_current_caller
+        from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-        caller = get_current_caller()
         block = enforce_guardrails(
             tool_name="health_status",
-            consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-            consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-            allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-            projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-            user_groups=caller.user_groups if caller else [],
+            **caller_guardrail_scope(),
         )
         if block:
             return block
@@ -230,7 +229,14 @@ def main() -> None:
     _configure_logging()
 
     if args.transport == "stdio":
-        logger.info("[STARTUP] Starting in stdio mode (local IDE, no auth)")
+        logger.info("[STARTUP] Starting in stdio mode (local IDE, no AuthMiddleware)")
+        if not GATEWAY_STDIO_TRUST_LOCAL:
+            logger.warning(
+                "[STARTUP] stdio mode runs without AuthMiddleware, so tool "
+                "calls carry no caller identity and are denied by the tool "
+                "authorization guardrail. Set GATEWAY_STDIO_TRUST_LOCAL=true "
+                "to grant this local caller unrestricted scope."
+            )
         try:
             from fastmcp import FastMCP  # type: ignore[import-untyped]
             mcp = FastMCP("Enterprise MCP Gateway")

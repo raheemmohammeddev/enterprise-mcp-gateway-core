@@ -40,17 +40,11 @@ def bre_check_access(user_pid: str) -> Dict[str, Any]:
     Returns:
         Dict describing the user's BRE access level and permissions.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="bre_check_access",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block
@@ -78,17 +72,11 @@ def bre_get_details(document_id: str) -> Dict[str, Any]:
     Returns:
         Dict with document fields, status, and metadata.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="bre_get_details",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block
@@ -113,17 +101,11 @@ def bre_get_picklists(list_name: str) -> Dict[str, Any]:
     Returns:
         Dict with picklist values.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="bre_get_picklists",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block
@@ -149,17 +131,11 @@ def bre_search(query: str, max_results: int = 20) -> Dict[str, Any]:
     Returns:
         Dict with matching documents.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="bre_search",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
+        **caller_guardrail_scope(),
     )
     if block:
         return block

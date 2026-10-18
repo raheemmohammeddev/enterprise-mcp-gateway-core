@@ -32,6 +32,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from gateway.config.settings import (
+    GATEWAY_STDIO_TRUST_LOCAL,
     USER_WRITE_AUTH_ENABLED,
     WRITE_AD_GROUPS,
     WRITE_RATE_LIMIT,
@@ -385,6 +386,63 @@ def check_write_rate_limit(
 
 
 # ======================================================================
+# Caller Scope Resolution
+# ======================================================================
+
+def caller_guardrail_scope(**overrides: Any) -> Dict[str, Any]:
+    """Resolve the current caller's guardrail scope into enforce_guardrails kwargs.
+
+    The absence of a caller identity is never by itself a wildcard grant. The
+    stdio transport runs without AuthMiddleware, so a stdio tool call has no
+    CallerIdentity in the context; the scope returned in that case is empty and
+    guardrail 1 denies the call with the standard 'tool_authorization' error.
+    GATEWAY_STDIO_TRUST_LOCAL is the explicit, default-false opt-in that
+    restores unrestricted local scope, and taking that path logs a WARNING.
+
+    Args:
+        **overrides: Per-call-site guardrail kwargs (jql, sql, issue_key,
+            credential_source), applied last.
+
+    Returns:
+        Keyword arguments to splat into enforce_guardrails().
+    """
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    if caller and caller.consumer:
+        scope: Dict[str, Any] = {
+            "consumer_id": caller.consumer.consumer,
+            "consumer_type": caller.consumer.type,
+            "allowed_tools": caller.consumer.allowed_tools,
+            "projects": caller.consumer.projects,
+            "user_groups": caller.user_groups,
+        }
+    elif GATEWAY_STDIO_TRUST_LOCAL:
+        logger.warning(
+            "[GUARDRAIL] INSECURE unrestricted scope granted to a caller with "
+            "no identity (GATEWAY_STDIO_TRUST_LOCAL=true)"
+        )
+        scope = {
+            "consumer_id": "stdio-local",
+            "consumer_type": "developer",
+            "allowed_tools": ["*"],
+            "projects": ["*"],
+            "user_groups": [],
+        }
+    else:
+        scope = {
+            "consumer_id": "",
+            "consumer_type": "developer",
+            "allowed_tools": [],
+            "projects": [],
+            "user_groups": [],
+        }
+
+    scope.update(overrides)
+    return scope
+
+
+# ======================================================================
 # Pipeline Orchestrator
 # ======================================================================
 
@@ -420,9 +478,14 @@ def enforce_guardrails(
     Returns:
         Structured error dict if any guardrail blocks, None if all pass.
     """
-    allowed_tools = allowed_tools or ["*"]
-    projects = projects or ["*"]
-    user_groups = user_groups or []
+    # Only an omitted argument means "unscoped". An explicitly empty list is a
+    # caller with no authorized tools or projects and must not widen to ['*'].
+    if allowed_tools is None:
+        allowed_tools = ["*"]
+    if projects is None:
+        projects = ["*"]
+    if user_groups is None:
+        user_groups = []
 
     checks = [
         # Guardrail 0: Tool Active Check

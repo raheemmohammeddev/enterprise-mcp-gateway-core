@@ -1,13 +1,17 @@
 """
 Enterprise MCP Gateway - Tool Authorization and Rate-Limit Regression Tests.
 
-Pins two fixes:
+Pins three fixes:
 
     1. enforce_guardrails() now runs inside every registered tool, not just
        the Jira ones, so a consumer whose allowed_tools excludes a Neo4j,
        BRE or Teradata tool is denied.
     2. The X-MCP-Jira-PAT rate-limit exemption is gone: a 'request_header'
        credential source no longer disables rate limiting.
+    3. A tool call with no caller identity in the context (every stdio call,
+       since AuthMiddleware never runs there) is denied instead of receiving
+       an implicit wildcard scope. GATEWAY_STDIO_TRUST_LOCAL is the explicit
+       opt-in that restores the old behaviour.
 
 Synchronous by design (pytest-asyncio is not installed).
 """
@@ -19,11 +23,13 @@ import pytest
 import gateway.backends.neo4j_backend as neo4j_module
 import gateway.backends.teradata_backend as teradata_module
 import gateway.config.db as db_module
+import gateway.guardrails.pipeline as pipeline_module
 import gateway.middleware.auth as auth_module
 from gateway.backends.bre_backend import bre_search
 from gateway.backends.neo4j_backend import neo4j_run_query
 from gateway.backends.teradata_backend import teradata_list_databases
 from gateway.config.settings import RATE_LIMIT_BRE
+from gateway.guardrails.pipeline import caller_guardrail_scope
 from gateway.middleware.auth import CallerIdentity
 from gateway.ratelimit.limiter import _call_timestamps, _consumer_timestamps
 from gateway.security.consumer_registry import ConsumerProfile
@@ -131,6 +137,42 @@ class TestAuthorizedToolPasses:
         assert result.get("error") is None
         assert result["query"] == "x"
         assert result["results"] == []
+
+
+# ======================================================================
+# Missing Caller Identity
+# ======================================================================
+
+class TestMissingIdentityIsDenied:
+    """No CallerIdentity in the context is never a wildcard grant."""
+
+    def test_neo4j_run_query_denied(self):
+        result = neo4j_run_query("MATCH (n) RETURN n")
+        assert result["error"] == "forbidden"
+        assert result["guardrail"] == "tool_authorization"
+
+    def test_bre_search_denied(self):
+        result = bre_search("x")
+        assert result["error"] == "forbidden"
+        assert result["guardrail"] == "tool_authorization"
+
+    def test_teradata_list_databases_denied(self):
+        result = teradata_list_databases()
+        assert result["error"] == "forbidden"
+        assert result["guardrail"] == "tool_authorization"
+
+    def test_scope_is_empty_not_wildcard(self):
+        scope = caller_guardrail_scope()
+        assert scope["allowed_tools"] == []
+        assert scope["projects"] == []
+
+    def test_stdio_trust_opt_in_restores_scope(self, monkeypatch):
+        """The explicit opt-in is the only way back to unrestricted scope."""
+        monkeypatch.setattr(pipeline_module, "GATEWAY_STDIO_TRUST_LOCAL", True)
+
+        result = bre_search("x")
+        assert result.get("error") is None
+        assert result["query"] == "x"
 
 
 # ======================================================================

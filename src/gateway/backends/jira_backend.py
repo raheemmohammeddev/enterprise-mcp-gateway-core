@@ -105,18 +105,11 @@ def get_jira_issues(jql: str, max_results: int = 20) -> Dict[str, Any]:
     Returns:
         Dict with issue list and metadata.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="get_jira_issues",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
-        jql=jql,
+        **caller_guardrail_scope(jql=jql),
     )
     if block:
         return block
@@ -136,16 +129,11 @@ def jira_get_issue_details(issue_key: str) -> Dict[str, Any]:
     Returns:
         Dict with issue fields, status, and metadata.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="jira_get_issue_details",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        issue_key=issue_key,
+        **caller_guardrail_scope(issue_key=issue_key),
     )
     if block:
         return block
@@ -171,19 +159,15 @@ def jira_create_issue(
     Returns:
         Dict with created issue key and URL.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller, get_current_jira_pat_source
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
+    from gateway.middleware.auth import get_current_jira_pat_source
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="jira_create_issue",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
-        credential_source=get_current_jira_pat_source(),
-        issue_key=f"{project}-0",
+        **caller_guardrail_scope(
+            credential_source=get_current_jira_pat_source(),
+            issue_key=f"{project}-0",
+        ),
     )
     if block:
         return block
@@ -213,18 +197,15 @@ def jira_add_comment(issue_key: str, comment: str) -> Dict[str, Any]:
     Returns:
         Dict with comment ID and status.
     """
-    from gateway.guardrails.pipeline import enforce_guardrails
-    from gateway.middleware.auth import get_current_caller, get_current_jira_pat_source
+    from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
+    from gateway.middleware.auth import get_current_jira_pat_source
 
-    caller = get_current_caller()
     block = enforce_guardrails(
         tool_name="jira_add_comment",
-        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
-        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
-        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
-        user_groups=caller.user_groups if caller else [],
-        credential_source=get_current_jira_pat_source(),
-        issue_key=issue_key,
+        **caller_guardrail_scope(
+            credential_source=get_current_jira_pat_source(),
+            issue_key=issue_key,
+        ),
     )
     if block:
         return block
