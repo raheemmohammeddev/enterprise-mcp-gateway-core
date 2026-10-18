@@ -15,6 +15,10 @@ response is forwarded message by message rather than materialized, non-http
 scopes pass through, and the caller identity reaches the downstream tool
 without leaking into the next request.
 
+Requests that target /mcp receive a JSON-RPC 2.0 error object on a 401, with
+the original machine-readable error key preserved at error.data.error; the
+tests below read that nested key. Non-MCP paths keep their plain bodies.
+
 These tests are synchronous by design (pytest-asyncio is not installed, so
 async tests would be skipped rather than run) and drive the real ASGI app
 through starlette's TestClient, which is an httpx client over the app. The two
@@ -113,7 +117,10 @@ class TestBypassRegressions:
         with client_factory() as client:
             resp = client.post("/mcp", json=_TOOLS_LIST, headers=_MCP_HEADERS)
             assert resp.status_code == 401
-            assert resp.json()["error"] == "unauthorized"
+            body = resp.json()
+            assert body["jsonrpc"] == "2.0"
+            assert body["error"]["code"] == -32001
+            assert body["error"]["data"]["error"] == "unauthorized"
 
     def test_unregistered_key_with_kiro_app_name_is_unauthorized(self, client_factory):
         """Path B: the kiro- prefix no longer waives API-key registration."""
@@ -128,7 +135,10 @@ class TestBypassRegressions:
                 },
             )
             assert resp.status_code == 401
-            assert resp.json()["error"] == "unauthorized"
+            body = resp.json()
+            assert body["jsonrpc"] == "2.0"
+            assert body["error"]["code"] == -32002
+            assert body["error"]["data"]["error"] == "unauthorized"
 
     def test_legacy_auto_whitelist_is_unauthorized(self, client_factory):
         """Path A: a kiro- app name with no token is rejected by default."""
@@ -139,7 +149,10 @@ class TestBypassRegressions:
                 headers={**_MCP_HEADERS, "X-MCP-App-Name": "kiro-local"},
             )
             assert resp.status_code == 401
-            assert resp.json()["error"] == "kiro_auth_required"
+            body = resp.json()
+            assert body["jsonrpc"] == "2.0"
+            assert body["error"]["code"] == -32001
+            assert body["error"]["data"]["error"] == "kiro_auth_required"
 
     def test_invalid_kiro_token_is_unauthorized(self, client_factory):
         with client_factory() as client:
@@ -153,7 +166,10 @@ class TestBypassRegressions:
                 },
             )
             assert resp.status_code == 401
-            assert resp.json()["error"] == "kiro_token_invalid"
+            body = resp.json()
+            assert body["jsonrpc"] == "2.0"
+            assert body["error"]["code"] == -32002
+            assert body["error"]["data"]["error"] == "kiro_token_invalid"
 
 
 # ======================================================================
@@ -222,7 +238,7 @@ class TestInsecureLocalOptIn:
                 },
             )
             assert resp.status_code == 401
-            assert resp.json()["error"] == "kiro_auth_required"
+            assert resp.json()["error"]["data"]["error"] == "kiro_auth_required"
 
     def test_loopback_peer_without_opt_in_is_unauthorized(self, client_factory, monkeypatch):
         monkeypatch.setattr(auth_module, "KIRO_RBAC_ENABLED", False)
@@ -358,3 +374,39 @@ class TestIdentityPropagation:
                 )
                 assert resp.status_code == 200
                 assert get_current_caller() is None
+
+
+# ======================================================================
+# JSON-RPC Error Envelope
+# ======================================================================
+
+class TestJsonRpcErrorEnvelope:
+    """Auth failures on /mcp speak JSON-RPC 2.0; other paths do not."""
+
+    def test_inbound_id_is_echoed(self, client_factory):
+        with client_factory() as client:
+            resp = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": "req-42", "method": "tools/list"},
+                headers=_MCP_HEADERS,
+            )
+            assert resp.status_code == 401
+            assert resp.json()["id"] == "req-42"
+
+    def test_unreadable_id_is_null(self, client_factory):
+        with client_factory() as client:
+            resp = client.post(
+                "/mcp",
+                content=b"{not valid json",
+                headers=_MCP_HEADERS,
+            )
+            assert resp.status_code == 401
+            body = resp.json()
+            assert body["id"] is None
+            assert body["error"]["data"]["error"] == "unauthorized"
+
+    def test_health_body_has_no_jsonrpc_key(self, client_factory):
+        with client_factory() as client:
+            resp = client.get("/health")
+            assert resp.status_code == 200
+            assert "jsonrpc" not in resp.json()

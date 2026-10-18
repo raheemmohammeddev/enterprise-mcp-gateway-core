@@ -233,6 +233,50 @@ such calls are denied by the tool authorization guardrail (`forbidden` /
 grants the local caller unrestricted tool and project scope and logs a warning
 on every call.
 
+### JSON-RPC error codes
+
+An authentication failure on the MCP JSON-RPC endpoint (`/mcp` and
+`/mcp/<...>`, excluding the public `/mcp/portal`, `/mcp/dashboard` and
+`/mcp/api/` prefixes) is returned as HTTP 401 with a well-formed JSON-RPC 2.0
+error object. The inbound request `id` is echoed when it is readable and is
+`null` otherwise (batch array, notification, or an unreadable, oversized or
+non-JSON body). The pre-existing machine-readable error key is preserved at
+`error.data.error`, so consumers that already branch on it keep working.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32001,
+    "message": "An API key is required. Set the X-MCP-API-Key header.",
+    "data": {
+      "error": "unauthorized",
+      "message": "An API key is required. Set the X-MCP-API-Key header."
+    }
+  }
+}
+```
+
+Gateway-defined codes, from the `-32000` to `-32099` range the specification
+reserves for server-defined errors:
+
+| Code | Condition | `error.data.error` |
+|---|---|---|
+| `-32001` | Authentication required: no credential presented | `unauthorized`, `kiro_auth_required` |
+| `-32002` | Authentication failed: credential presented but rejected | `unauthorized` (unregistered key), `kiro_token_invalid` |
+| `-32003` | Authorization precondition not met | `jwt_required` |
+
+The standard codes `-32700` (parse error), `-32600` (invalid request),
+`-32601` (method not found), `-32602` (invalid params) and `-32603` (internal
+error) are produced by the FastMCP JSON-RPC layer; the gateway does not
+override them and does not invent codes for conditions it never detects.
+
+Requests to any other path keep their plain `{"error": ..., "message": ...}`
+body: wrapping a health check or a dashboard API response in a `jsonrpc`
+object would misrepresent the protocol in use on that path. No error body
+ever carries a stack trace, exception text, token or key material.
+
 ---
 
 ## Security Guardrails

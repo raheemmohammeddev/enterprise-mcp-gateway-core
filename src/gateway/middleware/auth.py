@@ -17,6 +17,11 @@ the MCP endpoint at /mcp depends on. Pure ASGI forwards every
 http.response.body message through untouched, so a chunked or never-ending
 stream reaches the client as it is produced.
 
+Authentication failures on the MCP JSON-RPC endpoint are returned as
+well-formed JSON-RPC 2.0 error objects (HTTP 401 with a jsonrpc/id/error
+body); every other path keeps its plain error body. See _is_mcp_rpc_path and
+the _RPC_* code constants.
+
 Produces a CallerIdentity stored in the request scope (readable downstream as
 request.state.caller) and in a contextvars.ContextVar for async-safe access by
 audit loggers, rate limiters, and guardrails.
@@ -32,10 +37,11 @@ Design principles:
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -85,6 +91,117 @@ def _is_loopback_client(request: Request) -> bool:
     if any(header in request.headers for header in _FORWARDING_HEADERS):
         return False
     return client.host in _LOOPBACK_HOSTS
+
+
+# ======================================================================
+# JSON-RPC Error Envelope (MCP endpoint only)
+# ======================================================================
+
+# Server-defined JSON-RPC 2.0 error codes. The -32000 to -32099 range is
+# reserved for implementation-defined server errors by the specification. The
+# standard codes (-32700 parse, -32600 invalid request, -32601 unknown method,
+# -32602 invalid params, -32603 internal) are produced by the FastMCP JSON-RPC
+# layer and are never overridden here.
+_RPC_AUTH_REQUIRED = -32001      # no credential presented
+_RPC_AUTH_FAILED = -32002        # credential presented but rejected
+_RPC_AUTH_PRECONDITION = -32003  # authorization precondition not met
+
+# Hard cap on the body read performed only to correlate a JSON-RPC id.
+_MAX_ID_BODY_BYTES = 64 * 1024
+
+
+def _is_mcp_rpc_path(path: str) -> bool:
+    """Return True only for the MCP JSON-RPC endpoint.
+
+    The JSON-RPC error envelope is deliberately scoped to '/mcp' and
+    '/mcp/<...>', excluding the public portal, dashboard and dashboard-API
+    prefixes. Those serve plain HTTP, and wrapping a health check or a
+    dashboard API response in a jsonrpc object would misrepresent the
+    protocol actually in use on that path.
+    """
+    if any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
+        return False
+    return path == "/mcp" or path.startswith("/mcp/")
+
+
+async def _correlated_rpc_id(
+    request: Request, receive: Receive
+) -> Optional[Union[int, str]]:
+    """Read the inbound JSON-RPC id from the request body, or return None.
+
+    INVARIANT that makes consuming the body safe: this runs only on a failure
+    path, and a failure path never forwards the request to the downstream app,
+    so no stream the downstream app needs is consumed. The success path never
+    reads the body at all.
+
+    Returns None for a batch array, a notification, and for any body that is
+    oversized, unreadable or not JSON. Reading gives up at
+    _MAX_ID_BODY_BYTES rather than buffering an arbitrary payload.
+    """
+    if "json" not in request.headers.get("content-type", "").lower():
+        return None
+
+    body = b""
+    while True:
+        message = await receive()
+        if message.get("type") != "http.request":
+            return None
+        body += message.get("body", b"")
+        if len(body) > _MAX_ID_BODY_BYTES:
+            return None
+        if not message.get("more_body", False):
+            break
+
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    rpc_id = payload.get("id")
+    if isinstance(rpc_id, bool):
+        return None
+    if isinstance(rpc_id, (int, str)):
+        return rpc_id
+    return None
+
+
+async def _auth_error(
+    request: Request,
+    receive: Receive,
+    *,
+    error: str,
+    message: str,
+    code: int,
+) -> JSONResponse:
+    """Build the HTTP 401 response for an authentication failure.
+
+    On the MCP JSON-RPC endpoint the body is a well-formed JSON-RPC 2.0 error
+    object carrying the inbound id when it is readable, with the existing
+    machine-readable error key preserved at error.data.error so consumers that
+    already branch on it keep working. On every other path the plain body is
+    unchanged. The HTTP status is 401 either way, and no exception text, stack
+    trace, token or key material is ever placed in a body.
+    """
+    if not _is_mcp_rpc_path(request.url.path):
+        return JSONResponse(
+            status_code=401,
+            content={"error": error, "message": message},
+        )
+
+    return JSONResponse(
+        status_code=401,
+        content={
+            "jsonrpc": "2.0",
+            "id": await _correlated_rpc_id(request, receive),
+            "error": {
+                "code": code,
+                "message": message,
+                "data": {"error": error, "message": message},
+            },
+        },
+    )
 
 
 # ======================================================================
@@ -244,30 +361,30 @@ class AuthMiddleware:
             if KIRO_RBAC_ENABLED:
                 # Mode 2: Kiro RBAC -- require gateway-signed token
                 if not auth_token:
-                    response = JSONResponse(
-                        status_code=401,
-                        content={
-                            "error": "kiro_auth_required",
-                            "message": (
-                                "Kiro IDE access requires authentication. "
-                                "Visit the Kiro Access portal to generate a token."
-                            ),
-                        },
+                    response = await _auth_error(
+                        request,
+                        receive,
+                        error="kiro_auth_required",
+                        message=(
+                            "Kiro IDE access requires authentication. "
+                            "Visit the Kiro Access portal to generate a token."
+                        ),
+                        code=_RPC_AUTH_REQUIRED,
                     )
                     await response(scope, receive, send)
                     return
 
                 kiro_claims = validate_jwt_token(auth_token)
                 if kiro_claims is None or not kiro_claims.is_valid:
-                    response = JSONResponse(
-                        status_code=401,
-                        content={
-                            "error": "kiro_token_invalid",
-                            "message": (
-                                "Your Kiro access token is invalid or expired. "
-                                "Visit the Kiro Access portal to generate a new one."
-                            ),
-                        },
+                    response = await _auth_error(
+                        request,
+                        receive,
+                        error="kiro_token_invalid",
+                        message=(
+                            "Your Kiro access token is invalid or expired. "
+                            "Visit the Kiro Access portal to generate a new one."
+                        ),
+                        code=_RPC_AUTH_FAILED,
                     )
                     await response(scope, receive, send)
                     return
@@ -309,15 +426,15 @@ class AuthMiddleware:
                     request.client.host if request.client else "unknown",
                 )
             else:
-                response = JSONResponse(
-                    status_code=401,
-                    content={
-                        "error": "kiro_auth_required",
-                        "message": (
-                            "Kiro IDE access requires an authentication token. "
-                            "Visit the Kiro Access portal to generate one."
-                        ),
-                    },
+                response = await _auth_error(
+                    request,
+                    receive,
+                    error="kiro_auth_required",
+                    message=(
+                        "Kiro IDE access requires an authentication token. "
+                        "Visit the Kiro Access portal to generate one."
+                    ),
+                    code=_RPC_AUTH_REQUIRED,
                 )
                 await response(scope, receive, send)
                 return
@@ -327,12 +444,12 @@ class AuthMiddleware:
             consumer = authenticate(api_key)
             if consumer is None:
                 # Unregistered key: always rejected, regardless of app name
-                response = JSONResponse(
-                    status_code=401,
-                    content={
-                        "error": "unauthorized",
-                        "message": "Invalid or unregistered API key.",
-                    },
+                response = await _auth_error(
+                    request,
+                    receive,
+                    error="unauthorized",
+                    message="Invalid or unregistered API key.",
+                    code=_RPC_AUTH_FAILED,
                 )
                 await response(scope, receive, send)
                 return
@@ -340,12 +457,12 @@ class AuthMiddleware:
 
         else:
             # No credential presented: no anonymous access over HTTP
-            response = JSONResponse(
-                status_code=401,
-                content={
-                    "error": "unauthorized",
-                    "message": "An API key is required. Set the X-MCP-API-Key header.",
-                },
+            response = await _auth_error(
+                request,
+                receive,
+                error="unauthorized",
+                message="An API key is required. Set the X-MCP-API-Key header.",
+                code=_RPC_AUTH_REQUIRED,
             )
             await response(scope, receive, send)
             return
@@ -374,28 +491,28 @@ class AuthMiddleware:
                         "[AUTH] JWT identity override: %s -> %s", app_name, user_id
                     )
                 elif is_jwt_required_for_consumer(consumer.type):
-                    response = JSONResponse(
-                        status_code=401,
-                        content={
-                            "error": "jwt_required",
-                            "message": (
-                                f"JWT bearer token is required for consumer type "
-                                f"'{consumer.type}'."
-                            ),
-                        },
+                    response = await _auth_error(
+                        request,
+                        receive,
+                        error="jwt_required",
+                        message=(
+                            f"JWT bearer token is required for consumer type "
+                            f"'{consumer.type}'."
+                        ),
+                        code=_RPC_AUTH_PRECONDITION,
                     )
                     await response(scope, receive, send)
                     return
             elif is_jwt_required_for_consumer(consumer.type):
-                response = JSONResponse(
-                    status_code=401,
-                    content={
-                        "error": "jwt_required",
-                        "message": (
-                            f"Authorization: Bearer <token> header is required for "
-                            f"consumer type '{consumer.type}'."
-                        ),
-                    },
+                response = await _auth_error(
+                    request,
+                    receive,
+                    error="jwt_required",
+                    message=(
+                        f"Authorization: Bearer <token> header is required for "
+                        f"consumer type '{consumer.type}'."
+                    ),
+                    code=_RPC_AUTH_PRECONDITION,
                 )
                 await response(scope, receive, send)
                 return
