@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Raheem Mohammed"}
+    {name = "Raheem Mohammed", email = "raheemmohammed.dev@gmail.com"}
 ]
 keywords = ["mcp", "gateway", "rbac", "jwt", "enterprise", "ai-agent"]
 

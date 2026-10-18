@@ -104,6 +104,24 @@ ALLOWED_TICKET_PREFIXES = frozenset({"PROJ", "DEMO", "TEST", "EXAMPLE", "ANY", "
 # or filesystem path remains forbidden. It is a name only: no email address or employer.
 PUBLIC_AUTHOR_NAME = "Raheem Mohammed"
 
+# The author's single public contact address, allowed by the same exact-match rule as the name:
+# the whole address, case-sensitive, is removed from a line before the email and forbidden-term
+# checks. Any other address, a different case, or this local part on another domain is still
+# flagged. It is also accepted as a commit author address by the --identity check. This is a
+# personal address, never an employer one.
+PUBLIC_AUTHOR_EMAIL = "raheemmohammed.dev@gmail.com"
+
+# Boundary-anchored matchers for the two exceptions above. The address must not be glued to
+# more address characters on either side (a longer address or a longer domain is a different
+# address); a sentence-ending full stop after it is fine. The name must not be glued to more
+# letters or digits. Both are case-sensitive.
+PUBLIC_AUTHOR_NAME_RE = re.compile(
+    r"(?<![A-Za-z0-9])" + re.escape(PUBLIC_AUTHOR_NAME) + r"(?![A-Za-z0-9])"
+)
+PUBLIC_AUTHOR_EMAIL_RE = re.compile(
+    r"(?<![\w.+-])" + re.escape(PUBLIC_AUTHOR_EMAIL) + r"(?![\w-]|\.[\w-])"
+)
+
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("windows-user-path", re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+", re.IGNORECASE)),
     ("posix-user-path", re.compile(r"/(home|Users)/[a-z][\w.-]+/")),
@@ -200,13 +218,16 @@ def _line_categories(
     for category, pattern in PATTERNS:
         if pattern.search(line):
             categories.append(category)
-    if any(not email_allowed(m.group(1)) for m in EMAIL_RE.finditer(line)):
+    # The author's exact public name and address are removed first; everything else on the line
+    # is still checked, so the exception cannot mask a second hit on the same line.
+    scrubbed = PUBLIC_AUTHOR_NAME_RE.sub(" ", PUBLIC_AUTHOR_EMAIL_RE.sub(" ", line))
+    if any(not email_allowed(m.group(1)) for m in EMAIL_RE.finditer(scrubbed)):
         categories.append("email")
     if any(m.group(1) not in ALLOWED_ACCOUNT_IDS for m in ARN_ACCOUNT_RE.finditer(line)):
         categories.append("aws-account-id")
     if any(not _ticket_key_allowed(m.group(0)) for m in TICKET_KEY_RE.finditer(line)):
         categories.append("ticket-key")
-    if _has_forbidden_term(line.replace(PUBLIC_AUTHOR_NAME, " "), short_extras, long_extras):
+    if _has_forbidden_term(scrubbed, short_extras, long_extras):
         categories.append("forbidden-term")
     return categories
 
@@ -281,13 +302,17 @@ def _terms_file() -> Path:
 # ======================================================================
 
 def check_identity(root: Path) -> list[Finding]:
-    """Check ``git config user.email`` and commit author emails without printing them."""
+    """Check ``git config user.email`` and commit author/committer emails, never printing them.
+
+    The author's exact public address (``PUBLIC_AUTHOR_EMAIL``) is accepted; any other address
+    outside the placeholder domains is a finding.
+    """
     addresses: list[str] = []
-    for command in (["git", "config", "user.email"], ["git", "log", "--format=%ae"]):
+    for command in (["git", "config", "user.email"], ["git", "log", "--format=%ae%n%ce"]):
         result = subprocess.run(command, cwd=root, capture_output=True, text=True)
         if result.returncode == 0:
             addresses.extend(a.strip() for a in result.stdout.splitlines() if a.strip())
-    if any(not email_allowed(address) for address in addresses):
+    if any(a != PUBLIC_AUTHOR_EMAIL and not email_allowed(a) for a in addresses):
         return [Finding("git-metadata", 0, "git-identity")]
     return []
 

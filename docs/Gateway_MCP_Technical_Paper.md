@@ -1,8 +1,13 @@
 # Enterprise-Grade Model Context Protocol: Architecting a Multi-Tenant Gateway with Dynamic RBAC, Multi-Backend Integration, and Defense-in-Depth Observability
 
 **Author:** Raheem Mohammed
+
+**Contact:** raheemmohammed.dev@gmail.com
+
 **Date:** September 2026
+
 **Document Classification:** Technical Whitepaper -- Academic & Portfolio Submission Ready
+
 **Terminology Note:** This paper uses vendor-neutral and anonymized terminology. All open-source protocols, standards, and core technology names are retained as-is.
 
 ---

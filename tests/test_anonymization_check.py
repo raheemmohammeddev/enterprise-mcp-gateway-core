@@ -111,6 +111,45 @@ class TestForbiddenTerms:
         assert _categories(f"user r{last}") == ["forbidden-term"]
         assert _categories(f"github.com/{first}{last}dev/repo") == ["forbidden-term"]
 
+    def test_public_author_email_allowed(self):
+        email = gate.PUBLIC_AUTHOR_EMAIL
+        assert _categories(f"**Contact:** {email}") == []
+        assert _categories(f'{{name = "{gate.PUBLIC_AUTHOR_NAME}", email = "{email}"}}') == []
+
+    def test_public_author_email_is_exact_and_case_sensitive(self):
+        email = gate.PUBLIC_AUTHOR_EMAIL
+        local, domain = email.split("@")
+        assert "email" in _categories(f"Contact: {local}@mail.invalid")
+        assert "email" in _categories(f"Contact: other@{domain}")
+        assert "email" in _categories(f"Contact: {email.upper()}")
+        assert "email" in _categories(f"Contact: {email}.evil.invalid")
+        assert "email" in _categories(f"Contact: x.{email}")
+        assert "email" in _categories(f"Contact: x{email}")
+        assert _categories(f"Contact me at {email}.") == []
+
+    def test_public_author_email_does_not_mask_a_second_address(self):
+        email = gate.PUBLIC_AUTHOR_EMAIL
+        at = "@"  # assembled at runtime so no literal address appears in this scanned file
+        line = f"{email} and someone{at}mail.invalid"
+        assert "email" in _categories(line)
+
+    def test_identity_check_accepts_only_the_public_author_address(self, monkeypatch):
+        email = gate.PUBLIC_AUTHOR_EMAIL
+        at = "@"
+
+        class _Result:
+            def __init__(self, stdout):
+                self.returncode = 0
+                self.stdout = stdout
+
+        def _run_with(addresses):
+            return lambda command, **kwargs: _Result("\n".join(addresses) + "\n")
+
+        monkeypatch.setattr(gate.subprocess, "run", _run_with([email, f"x{at}example.com"]))
+        assert gate.check_identity(REPO_ROOT) == []
+        monkeypatch.setattr(gate.subprocess, "run", _run_with([email, f"x{at}mail.invalid"]))
+        assert [f.category for f in gate.check_identity(REPO_ROOT)] == ["git-identity"]
+
     def test_public_author_name_does_not_allow_an_email(self):
         name = gate.PUBLIC_AUTHOR_NAME
         at = "@"  # assembled at runtime so no literal address appears in this scanned file
