@@ -81,6 +81,41 @@ class TestForbiddenTerms:
         )
         assert _categories(clean) == []
 
+    # The public author attribution is allowed as one exact phrase and nothing wider. These
+    # tests build every string from the gate's own constant so no forbidden word is written
+    # in plaintext here (this file is itself scanned by the gate).
+
+    def test_public_author_name_allowed(self):
+        name = gate.PUBLIC_AUTHOR_NAME
+        assert _categories(f"Copyright (c) 2026 {name}") == []
+        assert _categories(f"**Author:** {name}") == []
+        assert _categories(f'LABEL maintainer="{name}"') == []
+
+    def test_public_author_name_words_alone_still_forbidden(self):
+        first, last = gate.PUBLIC_AUTHOR_NAME.split()
+        assert _categories(f"Author: {first}") == ["forbidden-term"]
+        assert _categories(f"Author: {last}") == ["forbidden-term"]
+
+    def test_public_author_name_is_case_sensitive(self):
+        name = gate.PUBLIC_AUTHOR_NAME
+        assert _categories(f"Author: {name.lower()}") == ["forbidden-term"]
+        assert _categories(f"Author: {name.upper()}") == ["forbidden-term"]
+
+    def test_public_author_name_does_not_mask_other_hits_on_the_line(self):
+        name = gate.PUBLIC_AUTHOR_NAME
+        first = name.split()[0]
+        assert _categories(f"{name} and also {first}") == ["forbidden-term"]
+
+    def test_username_forms_still_forbidden(self):
+        first, last = gate.PUBLIC_AUTHOR_NAME.lower().split()
+        assert _categories(f"user r{last}") == ["forbidden-term"]
+        assert _categories(f"github.com/{first}{last}dev/repo") == ["forbidden-term"]
+
+    def test_public_author_name_does_not_allow_an_email(self):
+        name = gate.PUBLIC_AUTHOR_NAME
+        at = "@"  # assembled at runtime so no literal address appears in this scanned file
+        assert "email" in _categories(f"{name} <someone{at}mail.invalid>")
+
     def test_extra_terms_short_whole_word(self, synthetic_terms):
         assert gate.scan_text("a ZY b", "f", ["zy"])[0].category == "forbidden-term"
         assert gate.scan_text("lazy", "f", ["zy"]) == []

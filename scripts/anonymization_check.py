@@ -98,6 +98,12 @@ ALLOWED_TICKET_KEYS = frozenset({
 # Project prefixes reserved for documentation and test placeholders, never real trackers.
 ALLOWED_TICKET_PREFIXES = frozenset({"PROJ", "DEMO", "TEST", "EXAMPLE", "ANY", "OTHER"})
 
+# The author's public attribution. This exact, case-sensitive phrase is removed from a line
+# before the forbidden-term check so the author can be credited in the LICENSE, package
+# metadata and paper byline. Each word on its own, in any other casing, or inside a username
+# or filesystem path remains forbidden. It is a name only: no email address or employer.
+PUBLIC_AUTHOR_NAME = "Raheem Mohammed"
+
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("windows-user-path", re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+", re.IGNORECASE)),
     ("posix-user-path", re.compile(r"/(home|Users)/[a-z][\w.-]+/")),
@@ -200,7 +206,7 @@ def _line_categories(
         categories.append("aws-account-id")
     if any(not _ticket_key_allowed(m.group(0)) for m in TICKET_KEY_RE.finditer(line)):
         categories.append("ticket-key")
-    if _has_forbidden_term(line, short_extras, long_extras):
+    if _has_forbidden_term(line.replace(PUBLIC_AUTHOR_NAME, " "), short_extras, long_extras):
         categories.append("forbidden-term")
     return categories
 
