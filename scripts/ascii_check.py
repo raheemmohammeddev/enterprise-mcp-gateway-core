@@ -1,7 +1,9 @@
 """
 Enterprise MCP Gateway - ASCII Gate.
 
-Fails on any byte outside 0x00-0x7F in tracked and untracked-but-not-ignored text files.
+Fails on any byte outside the project ASCII class - 0x09 (tab), 0x0A (LF), 0x0D (CR) and
+0x20-0x7E - in tracked and untracked-but-not-ignored text files. 0x7F (DEL) and the other C0
+control bytes are findings, not content.
 Uses the same file set and exclusions (``.venv/``, ``.git/``, ``.agents/``, binary files with a
 NUL in the first 8 KiB) as ``scripts/anonymization_check.py``.
 
@@ -37,7 +39,10 @@ from anonymization_check import (  # noqa: E402
 
 
 def scan_bytes(data: bytes, path: str) -> list[str]:
-    """Return one finding per line that contains a non-ASCII byte.
+    """Return one finding per line that contains a byte outside the project ASCII class.
+
+    The permitted class is 0x09, 0x0A, 0x0D and 0x20-0x7E. LF never reaches the inner loop
+    because it is the line separator; CR is permitted so CRLF files are not flagged.
 
     Args:
         data: Raw file contents.
@@ -49,7 +54,7 @@ def scan_bytes(data: bytes, path: str) -> list[str]:
     findings: list[str] = []
     for lineno, line in enumerate(data.split(b"\n"), start=1):
         for column, byte in enumerate(line, start=1):
-            if byte > 0x7F:
+            if byte > 0x7E or (byte < 0x20 and byte not in (0x09, 0x0A, 0x0D)):
                 findings.append(f"{path}:{lineno}:{column}: non-ascii")
                 break
     return findings

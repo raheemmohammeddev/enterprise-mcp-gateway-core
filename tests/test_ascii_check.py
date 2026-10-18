@@ -27,6 +27,15 @@ class TestScanBytes:
     def test_latin1_byte_detected(self):
         assert gate.scan_bytes(b"caf\xe9", "a.txt") == ["a.txt:1:4: non-ascii"]
 
+    def test_del_byte_detected(self):
+        assert gate.scan_bytes(b"ab\x7fcd", "a.txt") == ["a.txt:1:3: non-ascii"]
+
+    def test_control_byte_detected(self):
+        assert gate.scan_bytes(b"ab\x0ccd", "a.txt") == ["a.txt:1:3: non-ascii"]
+
+    def test_tab_and_carriage_return_allowed(self):
+        assert gate.scan_bytes(b"a\tb\r\nc\td\r\n", "a.txt") == []
+
     def test_output_omits_offending_character(self):
         finding = gate.scan_bytes(GRINNING_FACE.encode(), "a.txt")[0]
         assert GRINNING_FACE not in finding
