@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "enterprise-mcp-gateway"
@@ -17,14 +17,12 @@ keywords = ["mcp", "gateway", "rbac", "jwt", "enterprise", "ai-agent"]
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
-    "pytest-asyncio>=0.21",
     "pytest-cov>=4.1",
     "ruff>=0.4",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_mode = "auto"
 pythonpath = ["src"]
 
 [tool.ruff]
