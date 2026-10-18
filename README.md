@@ -49,6 +49,39 @@ Audit Pipelines (Jira | Generic | Access) --> DocumentDB
 
 ---
 
+## MCP Capabilities
+
+Exactly what the server advertises over `/mcp`, and nothing more:
+
+| Capability | Served | Methods |
+|---|---|---|
+| Tools | 15 | `tools/list`, `tools/call` |
+| Resources | 1 (`graph://neo4j/schema`) | `resources/list`, `resources/read` |
+| Prompts | 1 (`cypher_query_guidance`) | `prompts/list`, `prompts/get` |
+
+- `graph://neo4j/schema` (`application/json`) returns node labels,
+  relationship types, property keys and connected
+  `(:Label)-[:REL]->(:Label)` relationship patterns read from
+  `CALL db.schema.visualization()`. When that procedure is unavailable the
+  pattern list is empty and a `notes` field explains why; patterns are never
+  fabricated.
+- `cypher_query_guidance(question)` returns Cypher composition guidance that
+  embeds the live schema and the constraints the gateway actually enforces
+  (read-only keyword blocking and the auto-injected `LIMIT`, capped at 500
+  rows).
+- Both are registered only when `NEO4J_ENABLED=true`. With the backend
+  disabled nothing is registered, so no resources or prompts capability is
+  advertised.
+- Both pass through the same guardrail pipeline as the tools before any
+  database work: the resource authorizes against `neo4j_get_schema` and the
+  prompt against `neo4j_validate_query`, and the prompt withholds the live
+  schema unless the caller is also authorized for `neo4j_get_schema`. A
+  caller denied the tool cannot read the data through the resource or the
+  prompt, and a caller with no identity is denied outright.
+- No other resources or prompts are registered.
+
+---
+
 ## Quick Start
 
 ### Prerequisites

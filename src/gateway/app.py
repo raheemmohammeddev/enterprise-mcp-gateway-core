@@ -58,7 +58,10 @@ async def root_handler(request: Request) -> JSONResponse:
             "multi-backend integration, and defense-in-depth observability."
         ),
         "endpoints": {
-            "mcp": "/mcp (JSON-RPC 2.0 - MCP tools/call, tools/list)",
+            "mcp": (
+                "/mcp (JSON-RPC 2.0 - MCP tools/list, tools/call, "
+                "resources/list, resources/read, prompts/list, prompts/get)"
+            ),
             "health": "/health",
             "dashboard": "/mcp/portal",
             "api": "/mcp/api/*",
