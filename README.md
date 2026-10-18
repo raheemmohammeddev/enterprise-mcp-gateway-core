@@ -147,12 +147,21 @@ enterprise-mcp-gateway-core/
 | `JWT_ALGORITHMS` | `HS512` | Accepted JWT signing algorithms. Must stay within one key family (HMAC, RSA or EC); a mixed list is refused |
 | `JWT_VERIFY_AUD` | `true` | Verify the `aud` claim. Requires `JWT_AUDIENCE` to be set |
 | `JWT_AUDIENCE` | _(empty)_ | Expected audience; required when `JWT_VERIFY_AUD=true` |
-| `JWT_ISSUER` | _(empty)_ | Expected issuer; required when `JWT_AUTH_ENABLED=true` |
+| `JWT_ISSUER` | _(empty)_ | Expected issuer; always required, see the fail-closed note below |
 | `JWT_CLAIM_USER_ID` | `sAMAccountName,sub` | Comma-separated candidate claim keys for user ID |
 | `JWT_CLAIM_GROUPS` | `groups,roles` | Candidate claim keys for group membership |
 | `KIRO_RBAC_ENABLED` | `true` | Require a gateway-signed token for IDE consumers |
 | `GATEWAY_ALLOW_INSECURE_LOCAL` | `false` | Opt-in escape hatch for the legacy auto-whitelist. Also requires `KIRO_RBAC_ENABLED=false` and a loopback client |
 | `KIRO_TOKEN_TTL_HOURS` | `24` | Kiro token expiry in hours |
+
+The token validator is fail-closed and the configuration check runs on every
+validation, independently of `JWT_AUTH_ENABLED`. With `KIRO_RBAC_ENABLED=true`
+(the default) the Mode 2 gateway-signed token is validated by the same code
+path, so that mode requires `JWT_SECRET`, `JWT_ISSUER`, and either
+`JWT_AUDIENCE` or `JWT_VERIFY_AUD=false`. Any other combination makes the
+gateway refuse to validate tokens at all. This documents today's effective
+behaviour rather than changing it: validation already failed on the empty
+`JWT_SECRET` default.
 
 ### Rate Limiting
 | Variable | Default | Description |

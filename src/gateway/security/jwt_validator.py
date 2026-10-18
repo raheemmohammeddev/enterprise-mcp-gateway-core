@@ -11,7 +11,10 @@ Design principles:
     - IdP-agnostic: claim field names are configurable, not hardcoded
     - Fail-closed: refuses to validate when the configuration is unsafe
       (no issuer, audience verification without an audience, or algorithms
-      spanning multiple key families)
+      spanning multiple key families). The configuration check always runs,
+      regardless of JWT_AUTH_ENABLED, because the default-on Kiro RBAC
+      (Mode 2) path validates its gateway-signed token through the same
+      validate_jwt_token().
 """
 
 from __future__ import annotations
@@ -138,10 +141,11 @@ def _algorithm_family(algorithm: str) -> str:
 def _unsafe_jwt_configuration() -> str:
     """Return a reason string when the JWT configuration is unsafe, else ''.
 
-    Only enforced when JWT_AUTH_ENABLED is true. Never includes secrets.
+    Always enforced, independently of JWT_AUTH_ENABLED: the default-on Mode 2
+    (Kiro RBAC) path validates its gateway-signed token through the same
+    validate_jwt_token(), so gating this check on JWT_AUTH_ENABLED left it
+    inert on the shipped configuration. Never includes secrets.
     """
-    if not JWT_AUTH_ENABLED:
-        return ""
     if not JWT_ISSUER:
         return "JWT_ISSUER is not configured"
     if JWT_VERIFY_AUD and not JWT_AUDIENCE:

@@ -4,7 +4,10 @@ Enterprise MCP Gateway - JWT Validator Unit Tests.
 Tests IdP-agnostic JWT validation, claim extraction, and consumer type checks.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
+from jose import jwt as jose_jwt
 
 import gateway.security.jwt_validator as jwt_module
 from gateway.security.jwt_validator import (
@@ -132,15 +135,35 @@ class TestIsJwtRequired:
 # Fail-Closed Configuration Gate
 # ======================================================================
 
+_TEST_SECRET = "unit-test-jwt-secret-value"
+_TEST_ISSUER = "https://idp.example.com"
+_TEST_AUDIENCE = "mcp-gateway"
+
+
+def _mint_token(algorithm="HS512", secret=_TEST_SECRET):
+    """Mint a well-formed token matching the safe_config fixture values."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": "jdoe",
+        "iss": _TEST_ISSUER,
+        "aud": _TEST_AUDIENCE,
+        "iat": now,
+        "nbf": now,
+        "exp": now + timedelta(hours=1),
+    }
+    return jose_jwt.encode(payload, secret, algorithm=algorithm)
+
+
 class TestUnsafeJwtConfiguration:
     """Validation refuses to run on an unsafe algorithm/issuer/audience setup."""
 
     @pytest.fixture
     def safe_config(self, monkeypatch):
         monkeypatch.setattr(jwt_module, "JWT_AUTH_ENABLED", True)
-        monkeypatch.setattr(jwt_module, "JWT_ISSUER", "https://idp.example.com")
+        monkeypatch.setattr(jwt_module, "JWT_SECRET", _TEST_SECRET)
+        monkeypatch.setattr(jwt_module, "JWT_ISSUER", _TEST_ISSUER)
         monkeypatch.setattr(jwt_module, "JWT_VERIFY_AUD", True)
-        monkeypatch.setattr(jwt_module, "JWT_AUDIENCE", "mcp-gateway")
+        monkeypatch.setattr(jwt_module, "JWT_AUDIENCE", _TEST_AUDIENCE)
         monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["HS512"])
 
     def test_safe_config_passes(self, safe_config):
@@ -172,5 +195,24 @@ class TestUnsafeJwtConfiguration:
         assert jwt_module._unsafe_jwt_configuration() != ""
 
     def test_unsafe_config_makes_validation_return_none(self, safe_config, monkeypatch):
+        """Positive control first, so the rejection cannot pass for another reason."""
+        token = _mint_token()
+        claims = validate_jwt_token(token)
+        assert claims is not None
+        assert claims.user_id == "jdoe"
+
         monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["none"])
-        assert validate_jwt_token("a.b.c") is None
+        assert validate_jwt_token(token) is None
+
+    def test_mixed_key_families_make_validation_return_none(self, safe_config, monkeypatch):
+        """Only the configuration gate rejects this: the token itself verifies."""
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["HS256", "RS256"])
+        assert validate_jwt_token(_mint_token(algorithm="HS256")) is None
+
+    def test_gate_runs_when_jwt_auth_disabled(self, safe_config, monkeypatch):
+        """Regression: the gate used to return '' whenever JWT_AUTH_ENABLED was false,
+        leaving the default-on Mode 2 path unguarded."""
+        monkeypatch.setattr(jwt_module, "JWT_AUTH_ENABLED", False)
+        monkeypatch.setattr(jwt_module, "JWT_ISSUER", "")
+        assert jwt_module._unsafe_jwt_configuration() != ""
+        assert validate_jwt_token(_mint_token()) is None
