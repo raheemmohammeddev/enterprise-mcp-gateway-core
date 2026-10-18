@@ -9,14 +9,24 @@ Central ASGI middleware handling all authentication paths:
             (requires GATEWAY_ALLOW_INSECURE_LOCAL=true AND
             KIRO_RBAC_ENABLED=false AND a loopback peer address)
 
-Produces a CallerIdentity stored in request.state and a contextvars.ContextVar
-for async-safe downstream access by audit loggers, rate limiters, and guardrails.
+Implemented as pure ASGI middleware (__init__/__call__ over scope, receive and
+send) rather than Starlette's BaseHTTPMiddleware. BaseHTTPMiddleware pumps the
+downstream response through an anyio stream and materializes it as a single
+response object, which stalls the long-lived streamable-HTTP / SSE responses
+the MCP endpoint at /mcp depends on. Pure ASGI forwards every
+http.response.body message through untouched, so a chunked or never-ending
+stream reaches the client as it is produced.
+
+Produces a CallerIdentity stored in the request scope (readable downstream as
+request.state.caller) and in a contextvars.ContextVar for async-safe access by
+audit loggers, rate limiters, and guardrails.
 
 Design principles:
     - Single entry point for ALL auth decisions
     - JWT-verified identity overrides header-declared identity (zero-trust)
     - ContextVar propagation for async-safe identity flow
     - Public paths (health, dashboard) bypass auth entirely
+    - Never buffer a request or response body on the success path
 """
 
 from __future__ import annotations
@@ -27,9 +37,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gateway.config.settings import (
     GATEWAY_ALLOW_INSECURE_LOCAL,
@@ -170,8 +180,16 @@ def get_current_jira_pat_source() -> str:
 # Auth Middleware
 # ======================================================================
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Starlette middleware implementing three-mode authentication.
+class AuthMiddleware:
+    """Pure ASGI middleware implementing three-mode authentication.
+
+    Deliberately NOT a BaseHTTPMiddleware subclass. BaseHTTPMiddleware wraps
+    the downstream app in a task that pumps response messages through an anyio
+    memory stream and rebuilds them into one response object; that breaks the
+    streamable-HTTP / SSE responses served from /mcp, which must be delivered
+    chunk by chunk and can stay open indefinitely. This class forwards scope,
+    receive and send straight through, so no body is ever materialized on the
+    success path.
 
     Authentication flow:
         1. Public path bypass (health, portal, dashboard API)
@@ -190,13 +208,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
         8. Cleanup after request completes
     """
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        """Process authentication for every incoming request."""
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Process authentication for every incoming HTTP request."""
+        # Lifespan and websocket scopes carry no credentials and must reach the
+        # downstream app untouched.
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Read-only view over the scope: headers, path and client only. The
+        # request body is never awaited on the success path, so nothing is
+        # buffered ahead of the downstream app.
+        request = Request(scope, receive=receive)
         path = request.url.path
 
         # -- Public path bypass --
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         # -- Extract common headers --
         api_key = request.headers.get("x-mcp-api-key")
@@ -212,7 +244,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if KIRO_RBAC_ENABLED:
                 # Mode 2: Kiro RBAC -- require gateway-signed token
                 if not auth_token:
-                    return JSONResponse(
+                    response = JSONResponse(
                         status_code=401,
                         content={
                             "error": "kiro_auth_required",
@@ -222,10 +254,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                             ),
                         },
                     )
+                    await response(scope, receive, send)
+                    return
 
                 kiro_claims = validate_jwt_token(auth_token)
                 if kiro_claims is None or not kiro_claims.is_valid:
-                    return JSONResponse(
+                    response = JSONResponse(
                         status_code=401,
                         content={
                             "error": "kiro_token_invalid",
@@ -235,6 +269,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                             ),
                         },
                     )
+                    await response(scope, receive, send)
+                    return
 
                 # Build scoped ConsumerProfile from verified JWT claims
                 consumer = ConsumerProfile(
@@ -273,7 +309,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     request.client.host if request.client else "unknown",
                 )
             else:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=401,
                     content={
                         "error": "kiro_auth_required",
@@ -283,30 +319,36 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         ),
                     },
                 )
+                await response(scope, receive, send)
+                return
 
         # -- Mode 1: API Key Authentication --
         elif api_key:
             consumer = authenticate(api_key)
             if consumer is None:
                 # Unregistered key: always rejected, regardless of app name
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=401,
                     content={
                         "error": "unauthorized",
                         "message": "Invalid or unregistered API key.",
                     },
                 )
+                await response(scope, receive, send)
+                return
             auth_mode = "api-key"
 
         else:
             # No credential presented: no anonymous access over HTTP
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=401,
                 content={
                     "error": "unauthorized",
                     "message": "An API key is required. Set the X-MCP-API-Key header.",
                 },
             )
+            await response(scope, receive, send)
+            return
 
         # -- Extract identity from headers --
         user_id = request.headers.get("x-mcp-user-id", "")
@@ -332,7 +374,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         "[AUTH] JWT identity override: %s -> %s", app_name, user_id
                     )
                 elif is_jwt_required_for_consumer(consumer.type):
-                    return JSONResponse(
+                    response = JSONResponse(
                         status_code=401,
                         content={
                             "error": "jwt_required",
@@ -342,8 +384,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                             ),
                         },
                     )
+                    await response(scope, receive, send)
+                    return
             elif is_jwt_required_for_consumer(consumer.type):
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=401,
                     content={
                         "error": "jwt_required",
@@ -353,6 +397,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         ),
                     },
                 )
+                await response(scope, receive, send)
+                return
 
         # -- Kiro RBAC identity override --
         if jwt_claims and auth_mode.startswith("kiro-rbac"):
@@ -380,8 +426,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             credential_fingerprint=secret_fingerprint(jira_pat or api_key or ""),
         )
 
-        # Store in request state and context vars
-        request.state.caller = caller
+        # Store in request state and context vars. Writing scope["state"]
+        # directly is what Starlette's HTTPConnection.state does, so the value
+        # stays reachable downstream as request.state.caller.
+        scope.setdefault("state", {})["caller"] = caller
         token_caller = _current_caller_var.set(caller)
         token_pat = _jira_pat_var.set(jira_pat or None)
         token_pat_src = _jira_pat_source_var.set(jira_pat_source)
@@ -394,8 +442,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
         try:
-            response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
         finally:
             # -- Cleanup context vars after request --
             _current_caller_var.reset(token_caller)

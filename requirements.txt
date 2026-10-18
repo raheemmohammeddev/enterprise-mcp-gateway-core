@@ -10,7 +10,10 @@
 fastmcp==3.1.1
 
 # ASGI
-starlette>=1.4.1,<2
+# AuthMiddleware is written against stable ASGI primitives only (scope,
+# receive, send, starlette.types, Request for headers, Response.__call__), so
+# it is correct across the 1.x line. The test suite is executed against 1.0.0.
+starlette>=1.0,<2
 uvicorn>=0.32.0,<1
 
 # JWT / Cryptography
