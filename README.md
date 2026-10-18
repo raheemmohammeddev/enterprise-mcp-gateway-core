@@ -10,9 +10,9 @@ An enterprise-grade MCP server that mediates AI agent and IDE copilot access to 
 
 | Metric | Value |
 |---|---|
-| MCP Tools | 39 (Jira, BRE, Neo4j, Teradata, built-in) |
-| Backend Systems | 7 (Jira, BRE/RDS, Neo4j, Teradata, DocumentDB, SQL Server, LLM Orchestrator) |
-| Authentication Modes | 3 (API Key + JWT, Kiro RBAC, Legacy) |
+| MCP Tools | 15 registered (1 built-in, 4 Jira, 4 BRE stubs, 3 Neo4j, 3 Teradata) |
+| Backend Systems | 4 backend modules (Jira, BRE/RDS, Neo4j, Teradata) plus DocumentDB as the config/audit store |
+| Authentication Modes | 3 (API Key + JWT, Kiro RBAC, Legacy opt-in loopback only) |
 | Security Guardrails | 7 composable checks per request |
 | Audit Pipelines | 3 parallel (Jira, Generic, Access) |
 | Rate Limiting | 2-layer sliding window (per-consumer + per-group) |
@@ -118,7 +118,7 @@ enterprise-mcp-gateway-core/
       loggers.py                # 3 audit pipelines + sanitization
     backends/
       jira_backend.py           # Jira tools (read + write)
-      bre_backend.py            # Business Rule Engine tools
+      bre_backend.py            # Business Rule Engine tools (stubs, not implemented)
       neo4j_backend.py          # Neo4j Knowledge Graph tools
       teradata_backend.py       # Teradata via MCP sidecar
   tests/                        # Unit test suite
@@ -144,10 +144,14 @@ enterprise-mcp-gateway-core/
 |---|---|---|
 | `JWT_AUTH_ENABLED` | `false` | Enable JWT bearer token validation |
 | `JWT_SECRET` | _(empty)_ | Shared secret for JWT signing/validation |
-| `JWT_ALGORITHMS` | `HS512,HS256,RS256` | Accepted JWT signing algorithms |
+| `JWT_ALGORITHMS` | `HS512` | Accepted JWT signing algorithms. Must stay within one key family (HMAC, RSA or EC); a mixed list is refused |
+| `JWT_VERIFY_AUD` | `true` | Verify the `aud` claim. Requires `JWT_AUDIENCE` to be set |
+| `JWT_AUDIENCE` | _(empty)_ | Expected audience; required when `JWT_VERIFY_AUD=true` |
+| `JWT_ISSUER` | _(empty)_ | Expected issuer; required when `JWT_AUTH_ENABLED=true` |
 | `JWT_CLAIM_USER_ID` | `sAMAccountName,sub` | Comma-separated candidate claim keys for user ID |
 | `JWT_CLAIM_GROUPS` | `groups,roles` | Candidate claim keys for group membership |
-| `KIRO_RBAC_ENABLED` | `false` | Enable gateway-signed token RBAC for IDE consumers |
+| `KIRO_RBAC_ENABLED` | `true` | Require a gateway-signed token for IDE consumers |
+| `GATEWAY_ALLOW_INSECURE_LOCAL` | `false` | Opt-in escape hatch for the legacy auto-whitelist. Also requires `KIRO_RBAC_ENABLED=false` and a loopback client |
 | `KIRO_TOKEN_TTL_HOURS` | `24` | Kiro token expiry in hours |
 
 ### Rate Limiting
@@ -155,7 +159,7 @@ enterprise-mcp-gateway-core/
 |---|---|---|
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window duration |
 | `RATE_LIMIT_JIRA` | `30` | Global Jira calls per window |
-| `RATE_LIMIT_DEFAULT` | `59` | Default group limit (one under Jira's 60 burst) |
+| `RATE_LIMIT_DEFAULT` | `59` | Default group limit, enforced per pod (not a global cap) |
 | `WRITE_RATE_LIMIT` | `5` | Max writes per consumer per write window |
 
 ### Backends
@@ -178,6 +182,7 @@ enterprise-mcp-gateway-core/
 |---|---|---|
 | `DOCDB_HOST` | `localhost` | MongoDB/DocumentDB host |
 | `DOCDB_DATABASE` | `ENTERPRISE_MCP_GATEWAY` | Database name |
+| `DOCDB_TLS_ENABLED` | `true` | Connect with TLS and full certificate validation. The DocumentDB/RDS CA bundle must be in the host trust store |
 
 ---
 
@@ -197,8 +202,15 @@ X-MCP-App-Name: kiro-username
 X-MCP-Auth-Token: <gateway-signed-jwt>
 ```
 
-### Mode 3: Legacy (Auto-Whitelist)
-For local development (no authentication required):
+### Mode 3: Legacy (Auto-Whitelist) - local development only, off by default
+Disabled unless all three conditions hold: `GATEWAY_ALLOW_INSECURE_LOCAL=true`,
+`KIRO_RBAC_ENABLED=false`, and the request arrives from a loopback peer with no
+forwarding headers (`X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`,
+`Forwarded`). The peer address is the immediate TCP peer, so in a deployment
+where a reverse proxy or sidecar on the same host fronts the gateway and strips
+forwarding headers, a remote caller would appear loopback - keep this flag off
+anywhere behind a proxy. Any other request without a credential receives
+HTTP 401.
 ```
 X-MCP-App-Name: kiro-local
 ```

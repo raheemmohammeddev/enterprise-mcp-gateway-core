@@ -195,19 +195,12 @@ def authenticate(api_key: Optional[str]) -> Optional[ConsumerProfile]:
         api_key: The API key from the X-MCP-API-Key header, or None for stdio.
 
     Returns:
-        ConsumerProfile if authenticated, None if the key is unrecognized.
-        None api_key (stdio mode) returns a full-access developer profile.
+        ConsumerProfile if authenticated, None if the key is unrecognized or
+        missing. There is no anonymous full-access profile: a missing key is
+        not a credential.
     """
     if api_key is None:
-        # stdio mode: local developer with full access
-        return ConsumerProfile(
-            api_key="",
-            consumer="local",
-            type="developer",
-            allowed_tools=["*"],
-            rate_limit=999,
-            projects=["*"],
-        )
+        return None
 
     registry = _ensure_registry_loaded()
     return registry.get(api_key)

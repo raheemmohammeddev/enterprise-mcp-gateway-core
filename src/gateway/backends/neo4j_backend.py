@@ -76,6 +76,27 @@ def _apply_limit(query: str, cap: int = _DEFAULT_LIMIT) -> str:
     return f"{query.rstrip().rstrip(';')} LIMIT {cap}"
 
 
+def _check_read_only(query: str) -> Dict[str, Any]:
+    """Regex-based read-only validation shared by the Neo4j tools.
+
+    Kept separate from the neo4j_validate_query tool so neo4j_run_query can
+    reuse the check without re-entering that tool's own guardrail pipeline
+    (which would authorize against the wrong tool name).
+
+    Args:
+        query: The Cypher query string to validate.
+
+    Returns:
+        Dict with 'valid' and 'message' keys.
+    """
+    if _WRITE_KEYWORDS.search(query):
+        return {
+            "valid": False,
+            "message": "Query contains write operations (CREATE, MERGE, DELETE, etc.).",
+        }
+    return {"valid": True, "message": "Query passes read-only validation."}
+
+
 @audit_log
 @rate_limited
 def neo4j_get_schema(instance: Optional[str] = None) -> Dict[str, Any]:
@@ -87,6 +108,23 @@ def neo4j_get_schema(instance: Optional[str] = None) -> Dict[str, Any]:
     Returns:
         Dict with node labels, relationship types, and property keys.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="neo4j_get_schema",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
+    # Authorization decides first: backend enablement state is only disclosed
+    # to a caller the guardrails already allowed.
     if not NEO4J_ENABLED:
         return {"error": "neo4j_disabled", "message": "Neo4j is disabled in this environment."}
 
@@ -125,12 +163,22 @@ def neo4j_validate_query(query: str) -> Dict[str, Any]:
     Returns:
         Dict with validation result.
     """
-    if _WRITE_KEYWORDS.search(query):
-        return {
-            "valid": False,
-            "message": "Query contains write operations (CREATE, MERGE, DELETE, etc.).",
-        }
-    return {"valid": True, "message": "Query passes read-only validation."}
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="neo4j_validate_query",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
+    return _check_read_only(query)
 
 
 @audit_log
@@ -148,11 +196,28 @@ def neo4j_run_query(query: str, limit: int = _DEFAULT_LIMIT) -> Dict[str, Any]:
     Returns:
         Dict with query results as a list of record dicts.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="neo4j_run_query",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
+    # Authorization decides first: backend enablement state is only disclosed
+    # to a caller the guardrails already allowed.
     if not NEO4J_ENABLED:
         return {"error": "neo4j_disabled", "message": "Neo4j is disabled in this environment."}
 
     # Read-only enforcement
-    validation = neo4j_validate_query.__wrapped__(query)  # type: ignore[attr-defined]
+    validation = _check_read_only(query)
     if not validation.get("valid", False):
         return {"error": "neo4j_write_blocked", "message": validation.get("message", "")}
 

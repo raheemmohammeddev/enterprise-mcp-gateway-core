@@ -2,7 +2,12 @@
 # Pin major+minor versions for reproducibility.
 
 # MCP server framework
-fastmcp==3.4.6
+# The HTTP app is built via FastMCP.http_app() (3.x API); stateless_http is a
+# http_app() keyword, not a FastMCP() constructor keyword.
+# Pinned to the exact version exercised by the test suite (3.1.1). Raising the
+# pin requires re-verifying http_app() keywords and the Host/Origin guard
+# default, which changed within the 3.4.x line.
+fastmcp==3.1.1
 
 # ASGI
 starlette>=1.4.1,<2

@@ -1,7 +1,8 @@
 """
 Enterprise MCP Gateway - Application Entry Point.
 
-Starlette/ASGI server setup with stateless_http=True on /mcp.
+Starlette/ASGI server setup mounting the FastMCP HTTP app at /mcp.
+Stateless HTTP is requested via http_app(stateless_http=...) (FastMCP 3.x API).
 Supports two transport modes:
     - stdio: Local IDE clients (Kiro, Claude Desktop). No auth required.
     - streamable-http: Service-to-service over HTTPS with AuthMiddleware.
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 
@@ -73,15 +75,29 @@ def _configure_logging() -> None:
     )
 
 
+def _stateless_http_enabled() -> bool:
+    """Read FASTMCP_STATELESS_HTTP as a boolean (default true).
+
+    Stateless HTTP removes the MCP session handshake requirement so plain
+    HTTP consumers can POST tools/call directly.
+    """
+    return os.getenv("FASTMCP_STATELESS_HTTP", "true").lower() in ("true", "1", "yes")
+
+
 def create_app() -> Starlette:
     """Create the Starlette ASGI application.
 
-    The MCP server (FastMCP) is mounted at /mcp with stateless_http=True,
-    removing the MCP session handshake requirement so plain HTTP consumers
-    (Java RestTemplate, Python httpx, curl) can POST tools/call directly.
+    The MCP server (FastMCP) is mounted at /mcp. Stateless HTTP is requested
+    through http_app(stateless_http=...) so plain HTTP consumers (Java
+    RestTemplate, Python httpx, curl) can POST tools/call directly without
+    the MCP session handshake.
 
     Returns:
         Starlette application with AuthMiddleware and MCP routes.
+
+    Raises:
+        Exception: If the MCP application cannot be constructed. FastMCP is a
+            hard runtime dependency; booting without /mcp is never correct.
     """
     _configure_logging()
 
@@ -92,35 +108,38 @@ def create_app() -> Starlette:
     ]
 
     # Import and register MCP tools
+    stateless_http = _stateless_http_enabled()
     try:
         from fastmcp import FastMCP  # type: ignore[import-untyped]
 
-        mcp = FastMCP(
-            "Enterprise MCP Gateway",
-            stateless_http=True,
-        )
+        mcp = FastMCP("Enterprise MCP Gateway")
 
         # Register tool groups
         _register_tools(mcp)
 
-        # Mount MCP at /mcp
-        mcp_app = mcp.get_asgi_app()
-        logger.info("[STARTUP] FastMCP server created with stateless_http=True")
-    except ImportError:
-        logger.warning("[STARTUP] FastMCP not installed -- MCP endpoint disabled")
-        mcp_app = None
+        # Build the MCP ASGI app. path="/" because it is mounted at /mcp below.
+        mcp_app = mcp.http_app(
+            path="/",
+            stateless_http=stateless_http,
+            transport="http",
+        )
+        logger.info(
+            "[STARTUP] FastMCP HTTP app created (stateless_http=%s)", stateless_http
+        )
+    except Exception as exc:
+        logger.error("[STARTUP] MCP application construction failed: %s", exc)
+        raise
 
     app = Starlette(
         debug=False,
         routes=routes,
+        lifespan=mcp_app.lifespan,
     )
 
     # Add AuthMiddleware
     app.add_middleware(AuthMiddleware)
 
-    # Mount MCP app if available
-    if mcp_app is not None:
-        app.mount("/mcp", mcp_app)
+    app.mount("/mcp", mcp_app)
 
     logger.info(
         "[STARTUP] Enterprise MCP Gateway initialized (port=%d, log_level=%s)",
@@ -142,6 +161,21 @@ def _register_tools(mcp: object) -> None:
     @mcp.tool()  # type: ignore[attr-defined]
     def health_status() -> dict:
         """Gateway health and backend connectivity status."""
+        from gateway.guardrails.pipeline import enforce_guardrails
+        from gateway.middleware.auth import get_current_caller
+
+        caller = get_current_caller()
+        block = enforce_guardrails(
+            tool_name="health_status",
+            consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+            consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+            allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+            projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+            user_groups=caller.user_groups if caller else [],
+        )
+        if block:
+            return block
+
         return {
             "status": "healthy",
             "service": "enterprise-mcp-gateway",

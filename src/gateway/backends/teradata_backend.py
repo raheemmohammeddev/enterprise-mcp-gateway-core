@@ -202,13 +202,26 @@ def teradata_read_query(sql: str, row_limit: int = 1000) -> Dict[str, Any]:
     Returns:
         Dict with query results.
     """
-    if not TERADATA_MCP_ENABLED:
-        return {"error": "teradata_disabled", "message": "Teradata is disabled."}
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
 
-    from gateway.guardrails.pipeline import validate_sql_readonly
-    block = validate_sql_readonly("teradata_read_query", sql)
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="teradata_read_query",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+        sql=sql,
+    )
     if block:
         return block
+
+    # Authorization decides first: backend enablement state is only disclosed
+    # to a caller the guardrails already allowed.
+    if not TERADATA_MCP_ENABLED:
+        return {"error": "teradata_disabled", "message": "Teradata is disabled."}
 
     return _get_client().call_tool("base_readQuery", {"sql": sql, "rowLimit": row_limit})
 
@@ -217,8 +230,26 @@ def teradata_read_query(sql: str, row_limit: int = 1000) -> Dict[str, Any]:
 @rate_limited
 def teradata_list_databases() -> Dict[str, Any]:
     """List available Teradata databases."""
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="teradata_list_databases",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
+    # Authorization decides first: backend enablement state is only disclosed
+    # to a caller the guardrails already allowed.
     if not TERADATA_MCP_ENABLED:
         return {"error": "teradata_disabled", "message": "Teradata is disabled."}
+
     return _get_client().call_tool("base_databaseList")
 
 
@@ -233,8 +264,26 @@ def teradata_list_tables(database: str) -> Dict[str, Any]:
     Returns:
         Dict with table list.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="teradata_list_tables",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
+    # Authorization decides first: backend enablement state is only disclosed
+    # to a caller the guardrails already allowed.
     if not TERADATA_MCP_ENABLED:
         return {"error": "teradata_disabled", "message": "Teradata is disabled."}
+
     return _get_client().call_tool("base_tableList", {"database": database})
 
 

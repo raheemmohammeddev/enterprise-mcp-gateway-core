@@ -5,7 +5,9 @@ Central ASGI middleware handling all authentication paths:
 
     Mode 1: API Key + JWT Bearer Token (service-to-service consumers)
     Mode 2: Kiro RBAC (gateway-signed JWT for IDE consumers)
-    Mode 3: Kiro Legacy (auto-whitelist, local dev only)
+    Mode 3: Kiro Legacy (auto-whitelist) - opt-in, loopback only
+            (requires GATEWAY_ALLOW_INSECURE_LOCAL=true AND
+            KIRO_RBAC_ENABLED=false AND a loopback peer address)
 
 Produces a CallerIdentity stored in request.state and a contextvars.ContextVar
 for async-safe downstream access by audit loggers, rate limiters, and guardrails.
@@ -30,6 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from gateway.config.settings import (
+    GATEWAY_ALLOW_INSECURE_LOCAL,
     JWT_AUTH_ENABLED,
     KIRO_RBAC_ENABLED,
 )
@@ -45,6 +48,33 @@ logger = logging.getLogger("enterprise-mcp-gateway.auth")
 # Paths that bypass authentication entirely
 _PUBLIC_PATHS = frozenset({"/", "/health", "/favicon.ico"})
 _PUBLIC_PREFIXES = ("/mcp/portal", "/mcp/dashboard", "/mcp/api/", "/.well-known")
+
+# Peer addresses accepted by the local-development escape hatch
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+# Any of these headers means the request passed through a proxy, so the peer
+# address is the proxy's rather than the original caller's.
+_FORWARDING_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+def _is_loopback_client(request: Request) -> bool:
+    """Return True only for an unproxied request from a loopback peer.
+
+    Used to confine the insecure local-development auth path to the machine
+    the gateway runs on. Note the limitation: client.host is the immediate TCP
+    peer, so a reverse proxy or sidecar on the same host would make a remote
+    caller look local. Requests carrying forwarding headers are therefore
+    refused, but a proxy that strips those headers cannot be detected here --
+    which is why this path also requires the explicit
+    GATEWAY_ALLOW_INSECURE_LOCAL opt-in and must stay off in any deployment
+    that fronts the gateway with a proxy.
+    """
+    client = request.client
+    if client is None:
+        return False
+    if any(header in request.headers for header in _FORWARDING_HEADERS):
+        return False
+    return client.host in _LOOPBACK_HOSTS
 
 
 # ======================================================================
@@ -146,9 +176,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Authentication flow:
         1. Public path bypass (health, portal, dashboard API)
         2. Kiro IDE detection (no API key, app name starts with 'kiro-')
-           a. KIRO_RBAC_ENABLED=true: Validate X-MCP-Auth-Token (gateway-signed JWT)
-           b. KIRO_RBAC_ENABLED=false: Auto-whitelist with wildcard access
-        3. API Key authentication from X-MCP-API-Key header
+           a. KIRO_RBAC_ENABLED=true (default): Validate X-MCP-Auth-Token
+              (gateway-signed JWT); no token or an invalid token means 401
+           b. KIRO_RBAC_ENABLED=false: 401 unless GATEWAY_ALLOW_INSECURE_LOCAL
+              is explicitly true AND the peer address is loopback
+        3. API Key authentication from X-MCP-API-Key header. An unregistered
+           key is always a 401 - there is no prefix-based passthrough
+        3b. No credential at all is a 401 - there is no anonymous access
         4. JWT validation for service consumers (when JWT_AUTH_ENABLED=true)
         5. Header extraction for identity fields
         6. Credential resolution (Jira PAT, LLM orchestrator keys)
@@ -220,8 +254,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     kiro_claims.raw_payload.get("role", "user"),
                     len(consumer.allowed_tools),
                 )
-            else:
-                # Mode 3: Kiro Legacy -- auto-whitelist (local dev only)
+            elif GATEWAY_ALLOW_INSECURE_LOCAL and _is_loopback_client(request):
+                # Mode 3: Kiro Legacy -- auto-whitelist. Opt-in and loopback
+                # only; never reachable from another host.
                 consumer = ConsumerProfile(
                     api_key="",
                     consumer=f"kiro-{app_name}",
@@ -231,38 +266,47 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     projects=["*"],
                 )
                 auth_mode = "kiro-legacy"
-                logger.debug("[AUTH] Kiro legacy mode (auto-whitelist) for %s", app_name)
+                logger.warning(
+                    "[AUTH] INSECURE local auto-whitelist used: app=%s client=%s "
+                    "(GATEWAY_ALLOW_INSECURE_LOCAL=true)",
+                    app_name,
+                    request.client.host if request.client else "unknown",
+                )
+            else:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "kiro_auth_required",
+                        "message": (
+                            "Kiro IDE access requires an authentication token. "
+                            "Visit the Kiro Access portal to generate one."
+                        ),
+                    },
+                )
 
         # ── Mode 1: API Key Authentication ──
         elif api_key:
             consumer = authenticate(api_key)
             if consumer is None:
-                # Unknown API key but kiro- prefix: auto-whitelist passthrough
-                if app_name.lower().startswith("kiro-"):
-                    consumer = ConsumerProfile(
-                        api_key=api_key,
-                        consumer=f"kiro-passthrough-{app_name}",
-                        type="kiro-ide",
-                        allowed_tools=["*"],
-                        rate_limit=15,
-                        projects=["*"],
-                    )
-                    auth_mode = "kiro-passthrough"
-                else:
-                    return JSONResponse(
-                        status_code=401,
-                        content={
-                            "error": "unauthorized",
-                            "message": "Invalid or unregistered API key.",
-                        },
-                    )
-            else:
-                auth_mode = "api-key"
+                # Unregistered key: always rejected, regardless of app name
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "unauthorized",
+                        "message": "Invalid or unregistered API key.",
+                    },
+                )
+            auth_mode = "api-key"
 
         else:
-            # No API key and not Kiro: stdio mode (local development)
-            consumer = authenticate(None)
-            auth_mode = "stdio"
+            # No credential presented: no anonymous access over HTTP
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": "unauthorized",
+                    "message": "An API key is required. Set the X-MCP-API-Key header.",
+                },
+            )
 
         # ── Extract identity from headers ──
         user_id = request.headers.get("x-mcp-user-id", "")
@@ -319,6 +363,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # ── Credential extraction ──
         jira_pat = request.headers.get("x-mcp-jira-pat", "")
+        # Used only for write-credential attribution (guardrail 3). It has no
+        # effect on rate limiting: no credential source bypasses the limiter.
         jira_pat_source = "request_header" if jira_pat else "server_config"
 
         # ── Build CallerIdentity ──

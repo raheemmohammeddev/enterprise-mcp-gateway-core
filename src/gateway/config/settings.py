@@ -61,7 +61,9 @@ DOCDB_PORT: int = _int("DOCDB_PORT", 27017)
 DOCDB_USERNAME: str = os.getenv("DOCDB_USERNAME", "")
 DOCDB_PASSWORD: str = os.getenv("DOCDB_PASSWORD", "")
 DOCDB_DATABASE: str = os.getenv("DOCDB_DATABASE", "ENTERPRISE_MCP_GATEWAY")
-DOCDB_TLS_ENABLED: bool = _bool("DOCDB_TLS_ENABLED", False)
+# Secure default: TLS on with full certificate validation. The DocumentDB/RDS
+# CA bundle must be present in the host trust store.
+DOCDB_TLS_ENABLED: bool = _bool("DOCDB_TLS_ENABLED", True)
 
 # Collection names (vendor-neutral, mcp_ prefix convention)
 CONSUMERS_COLLECTION: str = "mcp_consumers"
@@ -88,8 +90,10 @@ REDIS_ENABLED: bool = _bool("REDIS_ENABLED", True)
 # ======================================================================
 JWT_AUTH_ENABLED: bool = _bool("JWT_AUTH_ENABLED", False)
 JWT_SECRET: str = os.getenv("JWT_SECRET", "")
-JWT_ALGORITHMS: List[str] = _list("JWT_ALGORITHMS", "HS512,HS256,RS256")
-JWT_VERIFY_AUD: bool = _bool("JWT_VERIFY_AUD", False)
+# Single key family only. Mixing HMAC and RSA algorithms in one accept-list
+# enables algorithm-confusion attacks; there is no JWKS/kid support here.
+JWT_ALGORITHMS: List[str] = _list("JWT_ALGORITHMS", "HS512")
+JWT_VERIFY_AUD: bool = _bool("JWT_VERIFY_AUD", True)
 JWT_AUDIENCE: str = os.getenv("JWT_AUDIENCE", "")
 JWT_ISSUER: str = os.getenv("JWT_ISSUER", "")
 # IdP-agnostic claim field mapping (comma-separated candidate names)
@@ -102,7 +106,12 @@ JWT_REQUIRED_CONSUMER_TYPES: List[str] = _list("JWT_REQUIRED_CONSUMER_TYPES", "a
 # ======================================================================
 # Kiro RBAC (Gateway-signed tokens for IDE consumers)
 # ======================================================================
-KIRO_RBAC_ENABLED: bool = _bool("KIRO_RBAC_ENABLED", False)
+# Secure default: IDE consumers must present a gateway-signed token.
+KIRO_RBAC_ENABLED: bool = _bool("KIRO_RBAC_ENABLED", True)
+# Explicit opt-out for local development only. Even when true, the legacy
+# auto-whitelist path additionally requires an unproxied loopback client
+# address (no X-Forwarded-For / Forwarded headers).
+GATEWAY_ALLOW_INSECURE_LOCAL: bool = _bool("GATEWAY_ALLOW_INSECURE_LOCAL", False)
 KIRO_TOKEN_TTL_HOURS: int = _int("KIRO_TOKEN_TTL_HOURS", 24)
 KIRO_TOKEN_ISSUER: str = os.getenv("KIRO_TOKEN_ISSUER", "enterprise-mcp-gateway")
 KIRO_TOKEN_AUDIENCE: str = os.getenv("KIRO_TOKEN_AUDIENCE", "kiro-mcp")

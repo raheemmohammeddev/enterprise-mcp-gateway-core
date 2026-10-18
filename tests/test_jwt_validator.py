@@ -6,6 +6,7 @@ Tests IdP-agnostic JWT validation, claim extraction, and consumer type checks.
 
 import pytest
 
+import gateway.security.jwt_validator as jwt_module
 from gateway.security.jwt_validator import (
     JWTClaims,
     _extract_claim,
@@ -125,3 +126,51 @@ class TestIsJwtRequired:
     def test_kiro_ide_never_required(self):
         """kiro-ide consumers use gateway-signed tokens, not IdP JWTs."""
         assert is_jwt_required_for_consumer("kiro-ide") is False
+
+
+# ======================================================================
+# Fail-Closed Configuration Gate
+# ======================================================================
+
+class TestUnsafeJwtConfiguration:
+    """Validation refuses to run on an unsafe algorithm/issuer/audience setup."""
+
+    @pytest.fixture
+    def safe_config(self, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_AUTH_ENABLED", True)
+        monkeypatch.setattr(jwt_module, "JWT_ISSUER", "https://idp.example.com")
+        monkeypatch.setattr(jwt_module, "JWT_VERIFY_AUD", True)
+        monkeypatch.setattr(jwt_module, "JWT_AUDIENCE", "mcp-gateway")
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["HS512"])
+
+    def test_safe_config_passes(self, safe_config):
+        assert jwt_module._unsafe_jwt_configuration() == ""
+
+    def test_unsigned_algorithm_rejected(self, safe_config, monkeypatch):
+        """A single-entry 'none' list is not a safe single key family."""
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["none"])
+        assert jwt_module._unsafe_jwt_configuration() != ""
+
+    def test_unrecognized_algorithm_rejected(self, safe_config, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["HS999"])
+        assert jwt_module._unsafe_jwt_configuration() != ""
+
+    def test_empty_algorithm_list_rejected(self, safe_config, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", [])
+        assert jwt_module._unsafe_jwt_configuration() != ""
+
+    def test_mixed_key_families_rejected(self, safe_config, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["HS256", "RS256"])
+        assert jwt_module._unsafe_jwt_configuration() != ""
+
+    def test_missing_issuer_rejected(self, safe_config, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_ISSUER", "")
+        assert jwt_module._unsafe_jwt_configuration() != ""
+
+    def test_audience_verification_without_audience_rejected(self, safe_config, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_AUDIENCE", "")
+        assert jwt_module._unsafe_jwt_configuration() != ""
+
+    def test_unsafe_config_makes_validation_return_none(self, safe_config, monkeypatch):
+        monkeypatch.setattr(jwt_module, "JWT_ALGORITHMS", ["none"])
+        assert validate_jwt_token("a.b.c") is None

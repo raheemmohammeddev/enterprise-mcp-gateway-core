@@ -9,7 +9,7 @@
 
 ## Abstract
 
-The Model Context Protocol (MCP) has emerged as the de facto standard for connecting large language models (LLMs) and AI agents to external tools and data sources. However, deploying MCP servers in regulated enterprise environments exposes fundamental gaps in the open-source specification: the protocol defines no authentication, no authorization, no audit trail, and no rate governance. This paper presents the architecture of an Enterprise MCP Gateway that closes these gaps through a layered, production-hardened design. The gateway mediates access to 39 tools across 7 heterogeneous backend systems -- including project management (Jira), graph databases (Neo4j), analytical data warehouses (Teradata), document databases (DocumentDB), business rule engines, reference data services, and an enterprise LLM orchestrator -- for multiple consumer classes: AI agents, IDE-based developer copilots (Kiro IDE), REST API clients, and batch ETL processes. The security perimeter implements three-mode JWT authentication, Active Directory group-based role-based access control (RBAC) with five graduated permission tiers, seven composable security guardrails enforced per request, and AES-256-GCM envelope encryption via AWS KMS for credential storage. Observability is addressed through three parallel audit pipelines writing to DocumentDB, structured log sanitization with SHA-256 credential fingerprinting, and two-layer sliding-window rate limiting (per-consumer and per-tool-group). All governance parameters -- rate limits, tool availability, guardrail thresholds, and backend routing -- are dynamically configurable via DocumentDB without redeployment, propagating across horizontally-scaled pods within 30 seconds. The system has been deployed across four environments (sandbox, development, UAT, production) on Amazon EKS with CI/CD-driven feature flags, and is presented to a Solution Review and Planning Board (SRPB) for enterprise architecture approval. This paper maps the gateway's architectural patterns to graduate-level learning outcomes in natural language processing, deep learning systems, and distributed AI architectures, demonstrating applied mastery of the infrastructure that enables responsible enterprise AI deployment.
+The Model Context Protocol (MCP) has emerged as the de facto standard for connecting large language models (LLMs) and AI agents to external tools and data sources. However, deploying MCP servers in regulated enterprise environments exposes fundamental gaps in the open-source specification: the protocol defines no authentication, no authorization, no audit trail, and no rate governance. This paper presents the architecture of an Enterprise MCP Gateway that closes these gaps through a layered, production-hardened design. This reference implementation registers 15 MCP tools across 4 backend modules -- project management (Jira), graph databases (Neo4j), analytical data warehouses (Teradata), and a business rule engine / reference data service whose 4 tools are stubs pending API configuration -- with DocumentDB as the configuration and audit store, for multiple consumer classes: AI agents, IDE-based developer copilots (Kiro IDE), REST API clients, and batch ETL processes. The security perimeter implements three-mode JWT authentication, Active Directory group-based role-based access control (RBAC) with five graduated permission tiers, seven composable security guardrails enforced per request, and AES-256-GCM envelope encryption via AWS KMS for credential storage. Observability is addressed through three parallel audit pipelines writing to DocumentDB, structured log sanitization with SHA-256 credential fingerprinting, and two-layer sliding-window rate limiting (per-consumer and per-tool-group). All governance parameters -- rate limits, tool availability, guardrail thresholds, and backend routing -- are dynamically configurable via DocumentDB without redeployment, propagating across horizontally-scaled pods within 30 seconds. The system has been deployed across four environments (sandbox, development, UAT, production) on Amazon EKS with CI/CD-driven feature flags, and is presented to a Solution Review and Planning Board (SRPB) for enterprise architecture approval. This paper maps the gateway's architectural patterns to graduate-level learning outcomes in natural language processing, deep learning systems, and distributed AI architectures, demonstrating applied mastery of the infrastructure that enables responsible enterprise AI deployment.
 
 ---
 
@@ -17,15 +17,15 @@ The Model Context Protocol (MCP) has emerged as the de facto standard for connec
 
 As organizations accelerate AI adoption, the gap between experimental AI prototypes and production-grade enterprise systems widens. The Model Context Protocol, published by Anthropic in 2024, standardizes how AI models invoke external tools -- but the specification intentionally omits security, governance, and observability, leaving these concerns to implementers. This paper documents a production implementation that fills those gaps.
 
-The Enterprise MCP Gateway described herein is not a proxy. It is a multi-tenant, multi-backend API gateway that enforces identity verification, fine-grained authorization, input validation, rate governance, credential management, and comprehensive audit logging on every tool invocation. It supports four distinct consumer types through three authentication modes, routes requests to seven backend systems through a unified interface, and provides runtime-configurable governance without redeployment.
+The Enterprise MCP Gateway described herein is not a proxy. It is a multi-tenant, multi-backend API gateway that enforces identity verification, fine-grained authorization, input validation, rate governance, credential management, and comprehensive audit logging on every tool invocation. It supports four distinct consumer types through three authentication modes, routes requests to the 4 backend modules implemented here through a unified interface, and provides runtime-configurable governance without redeployment.
 
 Key metrics from the reference implementation:
 
 | Metric | Value |
 |---|---|
-| MCP tools exposed | 39 (across 4 tool groups + 2 built-in) |
-| Backend systems integrated | 7 |
-| Authentication modes | 3 (API Key + JWT, Kiro RBAC, Legacy) |
+| MCP tools exposed | 15 registered in this repository (1 built-in + 4 Jira + 4 BRE stubs + 3 Neo4j + 3 Teradata) |
+| Backend systems integrated | 4 backend modules (Jira, BRE/RDS, Neo4j, Teradata) plus DocumentDB as the config/audit store |
+| Authentication modes | 3 (API Key + JWT, Kiro RBAC, Legacy opt-in loopback only) |
 | Security guardrails per request | 7 composable checks |
 | Audit pipelines | 3 parallel (domain-specific, generic, access) |
 | Rate limiting layers | 2 (per-consumer + per-tool-group) |
@@ -142,11 +142,10 @@ The following diagram illustrates the end-to-end request path from client throug
          |                                              |
          |  Layer 1: Per-consumer sliding window        |
          |           (from RBAC role: 10-30 calls/min)  |
-         |  Layer 2: Per-tool-group global limit        |
-         |           (from DocumentDB: default 59/min)  |
+         |  Layer 2: Per-tool-group per-pod limit       |
+         |           (Jira 30/min, default 59/min)      |
          |                                              |
-         |  Bypass: user-provided project-management    |
-         |           or orchestrator credential         |
+         |  No bypass: every call passes both layers    |
          +---------------------+------------------------+
                                |
                                v
@@ -258,13 +257,13 @@ This subsection defines the primary threat vectors addressed by the Enterprise M
 | Control | Layer | Mechanism |
 |---|---|---|
 | Per-consumer rate limiting (Layer 1) | Rate Limiter | Sliding-window limit per `consumer_id:tool_group` pair. Limit derived from RBAC role (10-30 calls/min). Prevents any single consumer from monopolizing backend capacity. |
-| Per-tool-group global rate limiting (Layer 2) | Rate Limiter | Aggregate sliding-window limit across all consumers per tool group. Default 59/min for Jira (one under the 60-call burst limit). Protects the backend from collective overload even when individual consumers are within their limits. |
+| Per-tool-group global rate limiting (Layer 2) | Rate Limiter | Sliding-window limit per tool group, across all consumers of one pod. Defaults: 30/min for Jira (`RATE_LIMIT_JIRA`), 59/min for groups with no specific limit (`RATE_LIMIT_DEFAULT`). Protects the backend from collective overload even when individual consumers are within their limits. |
 | Write rate limiting (Guardrail 7) | Guardrail Pipeline | Separate per-consumer sliding window for write operations (5 writes/600s). Prevents mutation storms independent of read rate allocation. |
-| User-credential bypass | Rate Limiter | Consumers providing their own PAT bypass the gateway's rate limiter because they consume their own API quota, not the shared service account's. This shifts the exhaustion risk to the individual user's own rate allocation. |
+| No credential-based bypass | Rate Limiter | Every call passes through both layers. A caller-supplied `X-MCP-Jira-PAT` header is not evidence of a separate backend quota, so it does not disable rate limiting; the header is used only for write-credential attribution (Guardrail 3). |
 | Maintenance windows | Maintenance System | DocumentDB-backed blackout periods that block all tool calls to a specific backend during planned maintenance, preventing cascading failures during degraded backend states. |
 | Neo4j auto-limit injection | Neo4j Client | `_apply_limit()` injects a `LIMIT` clause into Cypher queries that lack one, preventing unbounded result sets from exhausting memory or connection pool resources. |
 
-**Residual Risk:** The in-memory rate limiter does not share state across pods. In a 4-replica deployment, the effective global rate limit is up to 4x the configured value. Mitigation: the configured limit (59/min) accounts for this multiplier against Jira's actual 60/min burst limit.
+**Residual Risk:** The in-memory rate limiter does not share state across pods, so every limit is per pod. A 4-replica deployment with the default group limit of 59/min admits up to 4 x 59 = 236 calls/min in aggregate, which does NOT respect a 60/min backend burst limit. This is an open gap, not a mitigated one. Honest mitigations: move the sliding window to a shared store (Redis is already a declared dependency but is not used by the limiter), or set the per-pod limit to floor(backend_limit / replica_count) - 15/min per pod for a 60/min backend across 4 replicas.
 
 ### 2.1 Authentication Architecture
 
@@ -300,10 +299,10 @@ The RBAC system maps Active Directory groups to MCP roles with graduated permiss
 
 | Role | Tool Access | Project Scope | Rate Limit | Typical AD Group |
 |---|---|---|---|---|
-| Admin | All tools (39) | All projects | 30 calls/min | Platform administrators |
-| Developer | All tools (39) | All projects | 15 calls/min | Development team members |
-| Supervisor | All tools (39) | All projects | 20 calls/min | Team leads and supervisors |
-| Reader | 27 read-only tools | 6 specific projects | 10 calls/min | Standard platform users |
+| Admin | All registered tools (15 here) | All projects | 30 calls/min | Platform administrators |
+| Developer | All registered tools (15 here) | All projects | 15 calls/min | Development team members |
+| Supervisor | All registered tools (15 here) | All projects | 20 calls/min | Team leads and supervisors |
+| Reader | Read-only tools only (13 of the 15 here) | Configured projects | 10 calls/min | Standard platform users |
 | User (default) | Configurable subset | Configurable | 15 calls/min | General authenticated users |
 
 Role definitions are stored in a dedicated DocumentDB collection (`mcp_rbac_roles`) with one document per AD group. The collection supports full CRUD operations via the admin dashboard, with cache invalidation on every write to ensure changes take effect within 5 minutes across all pods.
@@ -359,7 +358,7 @@ The gateway implements a two-layer rate limiter protecting both individual consu
 Each consumer's rate limit is embedded in their RBAC role (e.g., 15 calls/min for developers, 30 calls/min for admins). The limiter tracks timestamps per `consumer_id:tool_group` pair in a sliding window. When a consumer exceeds their allocation, the gateway returns a structured error with `retry_after_seconds` and `limit_type: "consumer"`.
 
 **Layer 2 -- Global Per-Tool-Group Rate Limiting (Outer):**
-Each tool group (jira, brf, neo4j, teradata) has a global rate limit loaded from DocumentDB (default: 59 calls/min for Jira -- deliberately one under Jira's 60-call burst limit to provide a safety margin). This limit applies across all consumers combined, protecting the backend from aggregate overload.
+Each tool group (jira, brf, neo4j, teradata) has a per-group rate limit (code defaults: 30 calls/min for Jira via `RATE_LIMIT_JIRA`, 59 calls/min for unlisted groups via `RATE_LIMIT_DEFAULT`). This limit applies across all consumers of a single pod, protecting the backend from aggregate overload per replica; it is not a cluster-wide cap.
 
 Both layers use a sliding-window algorithm with in-memory timestamp tracking. The `@rate_limited` decorator wraps every tool function, checking Layer 1 then Layer 2 in sequence. Both must pass for the call to proceed.
 
@@ -402,14 +401,14 @@ record(t, consumer_id, group)       # Both passed -- record and proceed
 
 This two-layer design ensures that an individual consumer cannot monopolize backend capacity (Layer 1 enforcement) AND that the aggregate load from all consumers combined does not exceed backend thresholds (Layer 2 enforcement).
 
-**Intelligent Bypass:** When a caller provides their own personal access token or LLM orchestrator key (credential source is `request_header` or `profile`, not `server_config`), rate limiting is bypassed entirely. The rationale: these callers consume their own API quota, not the gateway's shared service account quota.
+**No credential-based bypass:** Both layers apply to every call. An earlier design skipped rate limiting when the caller supplied their own personal access token (credential source `request_header` or `profile`), on the theory that such calls consume the caller's own quota. That exemption was removed: the trigger was an unauthenticated request header whose mere presence disabled limiting for every tool group, which made the limiter opt-out for any caller. The credential source is still tracked, but only for write attribution (Guardrail 3).
 
 ### 3.2 Three Parallel Audit Pipelines
 
 The gateway writes audit records through three specialized pipelines, each optimized for its domain:
 
 **Pipeline 1 -- Domain-Specific Tool Audit (Jira):**
-The `@jira_audited` decorator wraps all 12 Jira tools. Each invocation produces a DocumentDB record in the `MCPJiraAudit` collection with the following schema:
+The `@jira_audited` decorator wraps all 4 Jira tools registered in this repository. Each invocation produces a DocumentDB record in the `MCPJiraAudit` collection with the following schema:
 
 - `timestamp`: ISO 8601 with millisecond precision
 - `tool`: Tool name (e.g., `jira_create_issue`)
@@ -478,7 +477,7 @@ A thread-safe in-memory metrics collector (FIFO eviction at 2,000 entries) recor
 
 ### 4.1 Backend Integration Patterns
 
-The gateway integrates seven backend systems through four distinct integration patterns:
+The gateway integrates its backend systems through four distinct integration patterns. This repository implements 4 backend modules (Jira, BRE/RDS, Neo4j, Teradata) plus DocumentDB as the configuration and audit store; the BRE/RDS module is a stub:
 
 **Pattern A -- Direct REST Client (Jira):**
 An `httpx`-based asynchronous HTTP client with configurable timeouts, retry logic, and connection pooling. Supports three authentication modes per request: Bearer token (PAT), HTTP Basic (email + API token), or delegated to the enterprise LLM orchestrator. Backend selection is dynamic -- configurable per Jira dashboard instance in DocumentDB -- enabling gradual migration from direct REST to LLM-orchestrated access.
@@ -634,7 +633,7 @@ The Enterprise MCP Gateway is a distributed system in its own right, and serves 
 
 | Graduate Learning Outcome | Gateway Implementation | Demonstrated Competency |
 |---|---|---|
-| Tool-augmented LLM architectures | 39 MCP tools with JSON-RPC invocation from AI agents | Design and deployment of LLM tool-use infrastructure |
+| Tool-augmented LLM architectures | 15 MCP tools with JSON-RPC invocation from AI agents | Design and deployment of LLM tool-use infrastructure |
 | Prompt injection and input safety | JQL/SQL validation guardrails blocking adversarial patterns | Applied NLP security for LLM-generated queries |
 | ML system observability | 3 audit pipelines with caller identity, duration, outcome tracking | Production AI monitoring and debugging infrastructure |
 | Model serving governance | Per-consumer rate limiting, tool authorization, RBAC | Multi-tenant AI system resource management |
@@ -659,10 +658,10 @@ This paper has presented the architecture of a production Enterprise MCP Gateway
 4. **AES-256-GCM envelope encryption** with AWS KMS for credential storage
 5. **Two-layer rate limiting** protecting both individual consumers and shared backend systems
 6. **Three parallel audit pipelines** ensuring complete traceability across all tool groups
-7. **Multi-backend orchestration** integrating 7 systems through 4 distinct integration patterns
+7. **Multi-backend orchestration** integrating the 4 backend modules implemented here (Jira, BRE, Neo4j, Teradata) plus DocumentDB as the configuration and audit store, through 4 distinct integration patterns
 8. **DocumentDB as dynamic configuration plane** enabling runtime governance without redeployment
 
-The system has been deployed in production across four environments on Amazon EKS, serving 39 tools to multiple consumer classes with measurable security, performance, and compliance characteristics.
+The system has been deployed in production across four environments on Amazon EKS, serving the 15 tools registered here to multiple consumer classes with measurable security, performance, and compliance characteristics.
 
 ### 6.2 Enterprise Architecture Alignment
 

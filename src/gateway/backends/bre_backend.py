@@ -1,9 +1,12 @@
 """
 Enterprise MCP Gateway - Business Rule Engine / Reference Data Service Backend.
 
-Provides MCP tools for BRE/RDS workflow operations: access checks, document
-retrieval, picklist loading, draft validation, document creation, and
-status transitions.
+Registers 4 MCP tools for BRE/RDS workflow operations: access checks,
+document retrieval, picklist loading, and search.
+
+NOT YET IMPLEMENTED: all 4 tools are stubs. They run the security guardrail
+pipeline and then return a canned "requires API configuration" response -
+no BRE/RDS backend call is made.
 
 All tools use the standard decorator composition:
     @audit_log -> @rate_limited -> tool logic
@@ -27,7 +30,9 @@ logger = logging.getLogger("enterprise-mcp-gateway.bre")
 @audit_log
 @rate_limited
 def bre_check_access(user_pid: str) -> Dict[str, Any]:
-    """Pre-check a user's BRE create/edit authorization.
+    """Stub - not yet implemented. Pre-check a user's BRE authorization.
+
+    Returns a canned not-configured response; no BRE/RDS API call is made.
 
     Args:
         user_pid: User's personnel identifier.
@@ -35,6 +40,21 @@ def bre_check_access(user_pid: str) -> Dict[str, Any]:
     Returns:
         Dict describing the user's BRE access level and permissions.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="bre_check_access",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
     # In production, this queries the BRE role API
     return {
         "user_pid": user_pid,
@@ -48,7 +68,9 @@ def bre_check_access(user_pid: str) -> Dict[str, Any]:
 @audit_log
 @rate_limited
 def bre_get_details(document_id: str) -> Dict[str, Any]:
-    """Get full details for a BRE document.
+    """Stub - not yet implemented. Get full details for a BRE document.
+
+    Returns a canned not-configured response; no BRE/RDS API call is made.
 
     Args:
         document_id: The document identifier.
@@ -56,6 +78,21 @@ def bre_get_details(document_id: str) -> Dict[str, Any]:
     Returns:
         Dict with document fields, status, and metadata.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="bre_get_details",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
     return {
         "document_id": document_id,
         "error": "bre_not_configured",
@@ -66,7 +103,9 @@ def bre_get_details(document_id: str) -> Dict[str, Any]:
 @audit_log
 @rate_limited
 def bre_get_picklists(list_name: str) -> Dict[str, Any]:
-    """Get reference data picklists from the Reference Data Service.
+    """Stub - not yet implemented. Get Reference Data Service picklists.
+
+    Returns a canned not-configured response; no BRE/RDS API call is made.
 
     Args:
         list_name: The picklist name to retrieve.
@@ -74,6 +113,21 @@ def bre_get_picklists(list_name: str) -> Dict[str, Any]:
     Returns:
         Dict with picklist values.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="bre_get_picklists",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
     return {
         "list_name": list_name,
         "values": [],
@@ -84,7 +138,9 @@ def bre_get_picklists(list_name: str) -> Dict[str, Any]:
 @audit_log
 @rate_limited
 def bre_search(query: str, max_results: int = 20) -> Dict[str, Any]:
-    """Search BRE documents by criteria.
+    """Stub - not yet implemented. Search BRE documents by criteria.
+
+    Returns a canned not-configured response; no BRE/RDS API call is made.
 
     Args:
         query: Search query string.
@@ -93,6 +149,21 @@ def bre_search(query: str, max_results: int = 20) -> Dict[str, Any]:
     Returns:
         Dict with matching documents.
     """
+    from gateway.guardrails.pipeline import enforce_guardrails
+    from gateway.middleware.auth import get_current_caller
+
+    caller = get_current_caller()
+    block = enforce_guardrails(
+        tool_name="bre_search",
+        consumer_id=caller.consumer.consumer if caller and caller.consumer else "",
+        consumer_type=caller.consumer.type if caller and caller.consumer else "developer",
+        allowed_tools=caller.consumer.allowed_tools if caller and caller.consumer else ["*"],
+        projects=caller.consumer.projects if caller and caller.consumer else ["*"],
+        user_groups=caller.user_groups if caller else [],
+    )
+    if block:
+        return block
+
     return {
         "query": query,
         "results": [],
@@ -111,4 +182,4 @@ def register(mcp: Any) -> None:
     mcp.tool()(bre_get_details)
     mcp.tool()(bre_get_picklists)
     mcp.tool()(bre_search)
-    logger.info("[BRE] Registered 4 Business Rule Engine tools")
+    logger.info("[BRE] Registered 4 Business Rule Engine tools (stubs -- not implemented)")

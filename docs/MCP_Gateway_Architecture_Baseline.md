@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The Enterprise MCP Gateway is a **production-deployed, multi-tenant MCP server** that exposes 39 tools across 7 backend systems (Jira, Business Rule Engine/Reference Data Service, Neo4j, Teradata, DocumentDB, Enterprise SQL Server, and an Enterprise LLM Orchestrator) with enterprise-grade security, observability, and governance. It is not a basic proxy. It implements dual-layer authentication, AD-group-based RBAC, seven composable security guardrails, two-layer rate limiting, KMS envelope encryption, three parallel audit pipelines, and a sidecar-supervised multi-backend architecture -- all backed by DocumentDB as the dynamic configuration plane.
+The Enterprise MCP Gateway is a **production-deployed, multi-tenant MCP server** that registers 15 tools across 4 backend modules in this repository (Jira, Business Rule Engine/Reference Data Service - stubbed, Neo4j, Teradata), with DocumentDB as the configuration and audit store, with enterprise-grade security, observability, and governance. It is not a basic proxy. It implements dual-layer authentication, AD-group-based RBAC, seven composable security guardrails, two-layer rate limiting, KMS envelope encryption, three parallel audit pipelines, and a sidecar-supervised multi-backend architecture -- all backed by DocumentDB as the dynamic configuration plane.
 
 ---
 
@@ -137,9 +137,9 @@ The rate limiter implements a sliding-window algorithm with two enforcement laye
 | Layer | Scope | Source | Purpose |
 |---|---|---|---|
 | Layer 1 (inner) | Per-consumer per-tool-group | `ConsumerProfile.rate_limit` from RBAC JWT claims | Individual user throttling (e.g., 15/min for developers) |
-| Layer 2 (outer) | Global per-tool-group | DocumentDB `mcp_tool_groups.rate_limit` (default 59 -- one under Jira's 60 burst limit) | Backend protection across all consumers |
+| Layer 2 (outer) | Per-tool-group, per pod | Code defaults: Jira 30 (`RATE_LIMIT_JIRA`), 59 for unlisted groups (`RATE_LIMIT_DEFAULT`) | Backend protection across all consumers of one pod (not a cluster-wide cap) |
 
-**Bypass logic**: When a caller provides their own Jira PAT or LLM orchestrator key (source != `server_config`), rate limiting is skipped entirely -- they consume their own API quota.
+**Bypass logic**: None. Every call passes through both layers. The former `X-MCP-Jira-PAT` exemption was removed because a caller-supplied header is not evidence of a separate backend quota.
 
 The `@rate_limited` decorator wraps every tool function and returns structured error with `retry_after_seconds` on breach.
 
@@ -194,7 +194,7 @@ A specialized cache for reference data service picklists:
 
 | Pipeline | Collection | Decorator | Scope |
 |---|---|---|---|
-| Jira Audit | `MCPJiraAudit` | `@jira_audited` | All 12 Jira tools + guardrail blocks |
+| Jira Audit | `MCPJiraAudit` | `@jira_audited` | All 4 Jira tools registered here + guardrail blocks |
 | Generic Audit | `MCPAuditLog` | `@audit_log` | BRE, Neo4j, Teradata tools |
 | Kiro Access Audit | `MCPKiroAudit` | `_audit_token_generation()` | Token generation success/failure |
 
@@ -277,7 +277,7 @@ These patterns elevate the gateway from a basic proxy to enterprise-grade:
 
 2. **Stateless HTTP MCP Transport**: `stateless_http=True` removes the MCP session handshake requirement, enabling plain HTTP consumers (Java RestTemplate, Python httpx) to `POST tools/call` directly without an `initialize` round-trip.
 
-3. **Credential Source Tracking**: Every credential (Jira PAT, LLM orchestrator key) carries a `source` tag (`request_header`, `profile`, `server_config`) through the entire request lifecycle. Audit logs record the source, guardrails make decisions based on it, and rate limiting bypasses on user-provided credentials.
+3. **Credential Source Tracking**: Every credential (Jira PAT, LLM orchestrator key) carries a `source` tag (`request_header`, `profile`, `server_config`) through the entire request lifecycle. Audit logs record the source and guardrails make decisions based on it. It has no effect on rate limiting.
 
 4. **Cohort-Based Intelligent Defaulting**: The BRE defaulting rules module provides ML-lite field suggestions for document creation based on historical cohort patterns. Rules are stored in DocumentDB with staleness thresholds (45 days) and support floors (50 rows).
 
@@ -306,7 +306,7 @@ These patterns elevate the gateway from a basic proxy to enterprise-grade:
 | **Consumer Registry** | Multi-source loading (DocumentDB -> Secrets Manager -> local file -> defaults); tool and project authorization | Graceful multi-tier degradation; per-consumer scoping prevents tool abuse |
 | **Security Guardrails Pipeline** | 7 composable checks: tool auth, write auth, credential attribution, JQL validation, SQL read-only, project scope, write rate limiting; DocumentDB-backed dynamic config | Defense-in-depth: every tool call passes 7 independent security gates; runtime-tunable without deploys |
 | **KMS Envelope Encryption** | AES-256-GCM with KMS-managed DEK; Fernet fallback for dev; CloudTrail audit of every decrypt | Tokens encrypted at rest in DocumentDB; master key never leaves KMS HSM; key rotation without re-encryption |
-| **Two-Layer Rate Limiter** | Per-consumer sliding window (RBAC-scoped) + per-tool-group global limit; user-credential bypass; structured retry_after | Prevents individual abuse AND backend overload; user-PAT bypass respects API quota ownership |
+| **Two-Layer Rate Limiter** | Per-consumer sliding window (RBAC-scoped) + per-tool-group per-pod limit; no credential-based bypass; structured retry_after | Prevents individual abuse AND backend overload with no caller-controlled escape |
 | **Jira Audit Trail** | DocumentDB + structured logger dual-write; full caller identity with credential fingerprint; guardrail integration audits blocked calls | Complete traceability of every Jira operation; blocked calls audited before rejection |
 | **Generic Audit Trail** | Schema-aligned with Jira audit; whitelist-based response summarization; fail-open `_audit_disabled` flag; tool source metadata injection | Consistent audit across all tool groups; audit failures don't block tool execution |
 | **Kiro Access Audit** | Every token generation attempt logged (success/failure); AD groups captured at issuance; client IP and user agent; aggregation stats API | Full access audit trail for compliance; enables detection of unauthorized access attempts |
@@ -345,49 +345,58 @@ These patterns elevate the gateway from a basic proxy to enterprise-grade:
 
 ---
 
-## Section 9: Tool Inventory (39 Tools)
+## Section 9: Tool Inventory (39 Designed / 15 Implemented Here)
 
-| # | Tool Name | Group | Category | Backend |
-|---|---|---|---|---|
-| 1 | `get_jira_issues` | jira | read | PAT/Basic/LLM Orchestrator |
-| 2 | `jira_get_issue_details` | jira | read | PAT/Basic/LLM Orchestrator |
-| 3 | `jira_create_issue` | jira | write | PAT/Basic/LLM Orchestrator |
-| 4 | `jira_assign_issue` | jira | write | PAT/Basic/LLM Orchestrator |
-| 5 | `jira_transition_issue` | jira | write | PAT/Basic/LLM Orchestrator |
-| 6 | `jira_add_comment` | jira | write | PAT/Basic/LLM Orchestrator |
-| 7 | `jira_attach_file` | jira | write | PAT only |
-| 8 | `jira_get_attachments` | jira | read | PAT/Basic/LLM Orchestrator |
-| 9 | `jira_get_comments` | jira | read | PAT/Basic/LLM Orchestrator |
-| 10 | `jira_get_sprint_issues` | jira | read | PAT/Basic/LLM Orchestrator |
-| 11 | `jira_search_users` | jira | read | PAT/Basic/LLM Orchestrator |
-| 12 | `jira_list_dashboards` | jira | read | PAT/Basic/LLM Orchestrator |
-| 13 | `bre_check_access` | bre | read | Reference Data Service API |
-| 14 | `bre_get_intake_details` | bre | read | Enterprise SQL Server |
-| 15 | `bre_get_details` | bre | read | Reference Data Service API |
-| 16 | `bre_search` | bre | read | Teradata |
-| 17 | `bre_get_intake_mapping` | bre | read | Reference Data Service API |
-| 18 | `bre_get_approval_chain` | bre | read | Reference Data Service API |
-| 19 | `bre_get_suggested_default` | bre | read | DocumentDB |
-| 20 | `bre_get_picklists` | bre | read | Reference Data Service API (cached) |
-| 21 | `bre_refresh_picklists` | bre | write | Reference Data Service API + Redis |
-| 22 | `bre_validate_draft` | bre | read | Reference Data Service API |
-| 23 | `bre_create` | bre | write | Reference Data Service API |
-| 24 | `bre_update_status` | bre | write | Reference Data Service API |
-| 25 | `bre_link_intake` | bre | write | Reference Data Service API |
-| 26 | `bre_attach_file` | bre | write | Reference Data Service API |
-| 27 | `bre_attach_jira_attachment` | bre | write | Jira + Reference Data Service API |
-| 28 | `neo4j_get_schema` | neo4j | read | Neo4j Bolt |
-| 29 | `neo4j_validate_query` | neo4j | read | Regex (local) |
-| 30 | `neo4j_run_query` | neo4j | read | Neo4j Bolt |
-| 31 | `teradata_read_query` | teradata | read | MCP Sidecar |
-| 32 | `teradata_list_databases` | teradata | read | MCP Sidecar |
-| 33 | `teradata_list_tables` | teradata | read | MCP Sidecar |
-| 34 | `teradata_describe_columns` | teradata | read | MCP Sidecar |
-| 35 | `teradata_get_column_metadata` | teradata | read | MCP Sidecar |
-| 36 | `teradata_get_table_ddl` | teradata | read | MCP Sidecar |
-| 37 | `teradata_preview_table` | teradata | read | MCP Sidecar |
-| 38 | `get_server_metrics` | built-in | read | In-memory |
-| 39 | `health_check` | built-in | read | Multi-backend probe |
+The table below is the full design inventory. The "Implemented here" column
+records what this repository actually registers: **15 tools** (verified by
+enumerating `_register_tools()` at runtime). The remaining 24 rows are
+roadmap items with no code in this repository.
+
+| # | Tool Name | Group | Category | Backend | Implemented here |
+|---|---|---|---|---|---|
+| 1 | `get_jira_issues` | jira | read | PAT/Basic/LLM Orchestrator | yes |
+| 2 | `jira_get_issue_details` | jira | read | PAT/Basic/LLM Orchestrator | yes |
+| 3 | `jira_create_issue` | jira | write | PAT/Basic/LLM Orchestrator | yes |
+| 4 | `jira_assign_issue` | jira | write | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 5 | `jira_transition_issue` | jira | write | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 6 | `jira_add_comment` | jira | write | PAT/Basic/LLM Orchestrator | yes |
+| 7 | `jira_attach_file` | jira | write | PAT only | no - roadmap |
+| 8 | `jira_get_attachments` | jira | read | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 9 | `jira_get_comments` | jira | read | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 10 | `jira_get_sprint_issues` | jira | read | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 11 | `jira_search_users` | jira | read | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 12 | `jira_list_dashboards` | jira | read | PAT/Basic/LLM Orchestrator | no - roadmap |
+| 13 | `bre_check_access` | bre | read | Reference Data Service API | yes - stub |
+| 14 | `bre_get_intake_details` | bre | read | Enterprise SQL Server | no - roadmap |
+| 15 | `bre_get_details` | bre | read | Reference Data Service API | yes - stub |
+| 16 | `bre_search` | bre | read | Teradata | yes - stub |
+| 17 | `bre_get_intake_mapping` | bre | read | Reference Data Service API | no - roadmap |
+| 18 | `bre_get_approval_chain` | bre | read | Reference Data Service API | no - roadmap |
+| 19 | `bre_get_suggested_default` | bre | read | DocumentDB | no - roadmap |
+| 20 | `bre_get_picklists` | bre | read | Reference Data Service API (cached) | yes - stub |
+| 21 | `bre_refresh_picklists` | bre | write | Reference Data Service API + Redis | no - roadmap |
+| 22 | `bre_validate_draft` | bre | read | Reference Data Service API | no - roadmap |
+| 23 | `bre_create` | bre | write | Reference Data Service API | no - roadmap |
+| 24 | `bre_update_status` | bre | write | Reference Data Service API | no - roadmap |
+| 25 | `bre_link_intake` | bre | write | Reference Data Service API | no - roadmap |
+| 26 | `bre_attach_file` | bre | write | Reference Data Service API | no - roadmap |
+| 27 | `bre_attach_jira_attachment` | bre | write | Jira + Reference Data Service API | no - roadmap |
+| 28 | `neo4j_get_schema` | neo4j | read | Neo4j Bolt | yes |
+| 29 | `neo4j_validate_query` | neo4j | read | Regex (local) | yes |
+| 30 | `neo4j_run_query` | neo4j | read | Neo4j Bolt | yes |
+| 31 | `teradata_read_query` | teradata | read | MCP Sidecar | yes |
+| 32 | `teradata_list_databases` | teradata | read | MCP Sidecar | yes |
+| 33 | `teradata_list_tables` | teradata | read | MCP Sidecar | yes |
+| 34 | `teradata_describe_columns` | teradata | read | MCP Sidecar | no - roadmap |
+| 35 | `teradata_get_column_metadata` | teradata | read | MCP Sidecar | no - roadmap |
+| 36 | `teradata_get_table_ddl` | teradata | read | MCP Sidecar | no - roadmap |
+| 37 | `teradata_preview_table` | teradata | read | MCP Sidecar | no - roadmap |
+| 38 | `get_server_metrics` | built-in | read | In-memory | no - roadmap |
+| 39 | `health_check` | built-in | read | Multi-backend probe | no - roadmap; the built-in tool registered here is `health_status` (gateway status only, no backend probe) |
+
+The 4 BRE tools marked `yes - stub` are **not yet implemented**: each runs the
+guardrail pipeline and then returns a canned "requires API configuration"
+response without calling any BRE/RDS backend (`bre_backend.py`).
 
 ---
 
@@ -395,9 +404,9 @@ These patterns elevate the gateway from a basic proxy to enterprise-grade:
 
 | Metric | Value |
 |---|---|
-| Total MCP tools | 39 (12 Jira + 15 BRE + 3 Neo4j + 7 Teradata + 2 built-in) |
-| Backend systems | 7 (Jira REST, Enterprise LLM Orchestrator, Reference Data Service API, Enterprise SQL Server, Teradata, Neo4j, DocumentDB) |
-| Dashboard API endpoints | ~30+ across 15 route modules |
+| Total MCP tools | 15 registered here (1 built-in + 4 Jira + 4 BRE stubs + 3 Neo4j + 3 Teradata); 39 in the full design inventory |
+| Backend systems | 4 backend modules here (Jira REST, Reference Data Service API stub, Neo4j, Teradata sidecar) plus DocumentDB as the config/audit store |
+| Dashboard API endpoints | Not present in this repository (no dashboard route modules are implemented here) |
 | DocumentDB collections | 11 |
 | Security guardrails | 7 composable checks |
 | Audit pipelines | 3 parallel (Jira, Generic, Kiro Access) |

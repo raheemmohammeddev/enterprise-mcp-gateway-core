@@ -22,8 +22,9 @@ Where:
 Implementation uses exact per-request timestamps for precise sliding-window
 semantics rather than bucketed approximation.
 
-Intelligent bypass: user-provided credentials (PAT, LLM orchestrator key)
-skip rate limiting -- they consume their own API quota, not the gateway's.
+No bypass: every call passes through both layers. A caller-supplied header
+is not evidence of a separate backend quota, so user-provided credentials
+(PAT, LLM orchestrator key) do not skip rate limiting.
 
 Design principles:
     - Fail-open: returns cached/empty limits if config store unavailable
@@ -125,23 +126,6 @@ def _get_consumer_id() -> str:
     except Exception:
         pass
     return "local"
-
-
-def _is_user_credential_request() -> bool:
-    """Check if the current request uses a user-provided credential.
-
-    When a caller provides their own PAT or LLM orchestrator key, rate
-    limiting is bypassed -- they consume their own API quota.
-
-    Returns:
-        True if the credential source is 'request_header' or 'profile'.
-    """
-    try:
-        from gateway.middleware.auth import get_current_jira_pat_source
-        source = get_current_jira_pat_source()
-        return source in ("request_header", "profile")
-    except Exception:
-        return False
 
 
 # ======================================================================
@@ -260,9 +244,8 @@ def rate_limited(fn: Callable) -> Callable:
     Layer 1 (inner): Per-consumer limit from the consumer's RBAC profile
     Layer 2 (outer): Per-tool-group limit from gateway configuration
 
-    Both layers must pass for the call to proceed. Rate limiting is skipped
-    when the caller provides their own credential (user PAT or LLM key),
-    since those calls consume the user's own quota.
+    Both layers must pass for the call to proceed. No credential and no
+    request header bypasses rate limiting.
 
     Usage:
         @rate_limited
@@ -272,15 +255,6 @@ def rate_limited(fn: Callable) -> Callable:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        # Skip rate limiting for user-credential requests
-        if _is_user_credential_request():
-            logger.debug("[RATE_SKIP] tool=%s -- user-provided credential, bypassing", fn.__name__)
-            start = time.time()
-            result = fn(*args, **kwargs)
-            duration_ms = (time.time() - start) * 1000
-            logger.info("[CALL] tool=%s group=user_cred duration=%.1fms", fn.__name__, duration_ms)
-            return result
-
         group = _get_group_for_tool(fn.__name__)
         consumer_id = _get_consumer_id()
 

@@ -47,7 +47,9 @@ def get_db():
                 f"?authSource=admin"
             )
             if DOCDB_TLS_ENABLED:
-                uri += "&tls=true&tlsAllowInvalidCertificates=true"
+                # Full certificate validation: the DocumentDB/RDS CA bundle
+                # must be present in the host trust store.
+                uri += "&tls=true"
         else:
             uri = f"mongodb://{DOCDB_HOST}:{DOCDB_PORT}/{DOCDB_DATABASE}"
 

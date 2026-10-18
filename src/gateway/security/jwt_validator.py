@@ -2,13 +2,16 @@
 Enterprise MCP Gateway - IdP-Agnostic JWT Validator.
 
 Validates JWTs from any identity provider through configurable claim field
-mapping. Supports multiple signing algorithms (HS512, HS256, RS256) to enable
-gradual migration between IdPs without code changes.
+mapping. The accepted algorithm list is configurable but must stay within a
+single key family (HMAC, RSA or EC) so algorithm-confusion attacks are not
+possible.
 
 Design principles:
     - Never raises: returns None on any validation failure (safe speculative call)
     - IdP-agnostic: claim field names are configurable, not hardcoded
-    - Multi-algorithm: negotiates HS512, HS256, RS256 simultaneously
+    - Fail-closed: refuses to validate when the configuration is unsafe
+      (no issuer, audience verification without an audience, or algorithms
+      spanning multiple key families)
 """
 
 from __future__ import annotations
@@ -32,6 +35,15 @@ from gateway.config.settings import (
 )
 
 logger = logging.getLogger("enterprise-mcp-gateway.jwt")
+
+# Signed algorithms this gateway accepts in JWT_ALGORITHMS. Anything outside
+# this allow-list (including 'none') is rejected as an unsafe configuration.
+_SUPPORTED_ALGORITHMS = frozenset({
+    "HS256", "HS384", "HS512",
+    "RS256", "RS384", "RS512",
+    "PS256", "PS384", "PS512",
+    "ES256", "ES384", "ES512",
+})
 
 
 @dataclass
@@ -103,6 +115,52 @@ def _extract_groups(payload: Dict[str, Any], candidate_keys: str) -> List[str]:
     return []
 
 
+def _algorithm_family(algorithm: str) -> str:
+    """Map a JWS algorithm name to its key family.
+
+    Args:
+        algorithm: Algorithm name (e.g., 'HS512', 'RS256').
+
+    Returns:
+        'hmac', 'rsa', 'ec', or 'unknown'. 'unknown' is always treated as an
+        unsafe configuration by _unsafe_jwt_configuration().
+    """
+    name = (algorithm or "").upper()
+    if name.startswith("HS"):
+        return "hmac"
+    if name.startswith(("RS", "PS")):
+        return "rsa"
+    if name.startswith("ES"):
+        return "ec"
+    return "unknown"
+
+
+def _unsafe_jwt_configuration() -> str:
+    """Return a reason string when the JWT configuration is unsafe, else ''.
+
+    Only enforced when JWT_AUTH_ENABLED is true. Never includes secrets.
+    """
+    if not JWT_AUTH_ENABLED:
+        return ""
+    if not JWT_ISSUER:
+        return "JWT_ISSUER is not configured"
+    if JWT_VERIFY_AUD and not JWT_AUDIENCE:
+        return "JWT_VERIFY_AUD is enabled but JWT_AUDIENCE is empty"
+    if not JWT_ALGORITHMS:
+        return "JWT_ALGORITHMS is empty"
+    unsupported = [
+        alg for alg in JWT_ALGORITHMS if (alg or "").upper() not in _SUPPORTED_ALGORITHMS
+    ]
+    if unsupported:
+        return "JWT_ALGORITHMS contains an unsupported algorithm name"
+    families = {_algorithm_family(alg) for alg in JWT_ALGORITHMS}
+    if "unknown" in families:
+        return "JWT_ALGORITHMS contains an algorithm with no recognized key family"
+    if len(families) > 1:
+        return "JWT_ALGORITHMS spans more than one key family"
+    return ""
+
+
 def validate_jwt_token(token: str) -> Optional[JWTClaims]:
     """Validate a JWT token and extract normalized claims.
 
@@ -123,6 +181,13 @@ def validate_jwt_token(token: str) -> Optional[JWTClaims]:
         logger.error("[JWT] JWT_SECRET is not configured -- cannot validate tokens")
         return None
 
+    unsafe = _unsafe_jwt_configuration()
+    if unsafe:
+        logger.error(
+            "[JWT] Refusing to validate tokens with an unsafe configuration: %s", unsafe
+        )
+        return None
+
     try:
         from jose import jwt as jose_jwt  # type: ignore[import-untyped]
     except ImportError:
@@ -132,9 +197,12 @@ def validate_jwt_token(token: str) -> Optional[JWTClaims]:
     try:
         # Build decode options
         options: Dict[str, Any] = {
+            "verify_signature": True,
             "verify_aud": JWT_VERIFY_AUD,
             "verify_exp": True,
             "verify_iat": True,
+            "verify_nbf": True,
+            "verify_iss": True,
         }
 
         decode_kwargs: Dict[str, Any] = {
