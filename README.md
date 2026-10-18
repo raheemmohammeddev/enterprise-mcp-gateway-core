@@ -70,14 +70,25 @@ Exactly what the server advertises over `/mcp`, and nothing more:
   (read-only keyword blocking and the auto-injected `LIMIT`, capped at 500
   rows).
 - Both are registered only when `NEO4J_ENABLED=true`. With the backend
-  disabled nothing is registered, so no resources or prompts capability is
-  advertised.
+  disabled `resources/list` and `prompts/list` return empty and a
+  `resources/read` of `graph://neo4j/schema` fails with `Resource not found`.
+  The `resources` and `prompts` capability flags themselves are advertised
+  unconditionally: the FastMCP layer builds the `initialize` capability object
+  from its own server features, not from what the backends registered. The
+  registration guard controls the lists, which is what a discovering client
+  enumerates.
 - Both pass through the same guardrail pipeline as the tools before any
   database work: the resource authorizes against `neo4j_get_schema` and the
   prompt against `neo4j_validate_query`, and the prompt withholds the live
   schema unless the caller is also authorized for `neo4j_get_schema`. A
   caller denied the tool cannot read the data through the resource or the
   prompt, and a caller with no identity is denied outright.
+- A guardrail denial is delivered in the body, not as a JSON-RPC error, which
+  follows the gateway convention that handler errors are returned at HTTP 200:
+  a denied `resources/read` returns `contents[0].text` holding the
+  `{"error": "forbidden", "guardrail": "tool_authorization", ...}` document,
+  and a denied `prompts/get` returns that same document as the prompt text. A
+  client has to inspect the payload; it gets no protocol-level signal.
 - No other resources or prompts are registered.
 
 ---
@@ -300,10 +311,20 @@ reserves for server-defined errors:
 | `-32002` | Authentication failed: credential presented but rejected | `unauthorized` (unregistered key), `kiro_token_invalid` |
 | `-32003` | Authorization precondition not met | `jwt_required` |
 
+`-32002` overlaps a code MCP itself defines: the FastMCP layer returns
+`-32002` with the message `Resource not found` on this same `/mcp` endpoint,
+for example on a `resources/read` of an unregistered URI. The gateway keeps
+its three codes in one contiguous block rather than renumbering around the
+overlap, so do not branch on the code alone. The discriminators for a gateway
+authentication failure are the HTTP `401` status, which the protocol-level
+errors never carry, and the `error.data.error` key.
+
 The standard codes `-32700` (parse error), `-32600` (invalid request),
 `-32601` (method not found), `-32602` (invalid params) and `-32603` (internal
-error) are produced by the FastMCP JSON-RPC layer; the gateway does not
-override them and does not invent codes for conditions it never detects.
+error) are produced by the FastMCP JSON-RPC layer, as are MCP-defined codes
+such as the `-32002` above, so that list is not exhaustive; the gateway does
+not override any of them and does not invent codes for conditions it never
+detects.
 
 Requests to any other path keep their plain `{"error": ..., "message": ...}`
 body: wrapping a health check or a dashboard API response in a `jsonrpc`
@@ -341,6 +362,18 @@ pytest tests/ --cov=gateway --cov-report=term-missing
 # Run specific test module
 pytest tests/test_guardrails.py -v
 ```
+
+`requirements.txt` declares `starlette>=1.0,<2` and the suite is exercised
+locally against `starlette 1.0.0`, where it reports zero warnings. A clean CI
+install resolves a newer release in the same `1.x` line, which emits one
+`StarletteDeprecationWarning` from `starlette.testclient` about its httpx
+dependency. The warning comes from the test client, not from gateway code, and
+no gate turns warnings into errors, so the suite passes either way; the
+zero-warning property is a property of the local pin, not of the declared
+range. The range is kept deliberately: the pure-ASGI middleware is written
+against stable ASGI primitives and is expected to hold across `1.x`, and
+pinning an upper bound the project has never needed would claim more than the
+evidence supports.
 
 ---
 
