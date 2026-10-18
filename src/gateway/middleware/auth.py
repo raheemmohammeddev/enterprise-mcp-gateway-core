@@ -194,11 +194,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Process authentication for every incoming request."""
         path = request.url.path
 
-        # ── Public path bypass ──
+        # -- Public path bypass --
         if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
             return await call_next(request)
 
-        # ── Extract common headers ──
+        # -- Extract common headers --
         api_key = request.headers.get("x-mcp-api-key")
         app_name = request.headers.get("x-mcp-app-name", "")
         auth_token = request.headers.get("x-mcp-auth-token", "")
@@ -207,7 +207,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         jwt_claims: Optional[JWTClaims] = None
         auth_mode = "none"
 
-        # ── Kiro IDE Detection (no API key, app starts with 'kiro-') ──
+        # -- Kiro IDE Detection (no API key, app starts with 'kiro-') --
         if not api_key and app_name.lower().startswith("kiro-"):
             if KIRO_RBAC_ENABLED:
                 # Mode 2: Kiro RBAC -- require gateway-signed token
@@ -284,7 +284,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     },
                 )
 
-        # ── Mode 1: API Key Authentication ──
+        # -- Mode 1: API Key Authentication --
         elif api_key:
             consumer = authenticate(api_key)
             if consumer is None:
@@ -308,14 +308,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # ── Extract identity from headers ──
+        # -- Extract identity from headers --
         user_id = request.headers.get("x-mcp-user-id", "")
         username = request.headers.get("x-mcp-username", "")
         user_email = request.headers.get("x-mcp-user-email", "")
         user_groups_raw = request.headers.get("x-mcp-user-groups", "")
         user_groups = [g.strip() for g in user_groups_raw.split(",") if g.strip()]
 
-        # ── JWT validation for service consumers (Mode 1 enhancement) ──
+        # -- JWT validation for service consumers (Mode 1 enhancement) --
         if consumer and consumer.type != "kiro-ide" and JWT_AUTH_ENABLED:
             bearer = request.headers.get("authorization", "")
             if bearer.lower().startswith("bearer "):
@@ -354,20 +354,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     },
                 )
 
-        # ── Kiro RBAC identity override ──
+        # -- Kiro RBAC identity override --
         if jwt_claims and auth_mode.startswith("kiro-rbac"):
             user_id = jwt_claims.user_id
             username = jwt_claims.username
             user_email = jwt_claims.email
             user_groups = jwt_claims.groups
 
-        # ── Credential extraction ──
+        # -- Credential extraction --
         jira_pat = request.headers.get("x-mcp-jira-pat", "")
         # Used only for write-credential attribution (guardrail 3). It has no
         # effect on rate limiting: no credential source bypasses the limiter.
         jira_pat_source = "request_header" if jira_pat else "server_config"
 
-        # ── Build CallerIdentity ──
+        # -- Build CallerIdentity --
         from gateway.audit.loggers import secret_fingerprint
 
         caller = CallerIdentity(
@@ -397,7 +397,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return response
         finally:
-            # ── Cleanup context vars after request ──
+            # -- Cleanup context vars after request --
             _current_caller_var.reset(token_caller)
             _jira_pat_var.reset(token_pat)
             _jira_pat_source_var.reset(token_pat_src)
