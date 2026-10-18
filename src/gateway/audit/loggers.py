@@ -25,11 +25,11 @@ import functools
 import hashlib
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from gateway.config.settings import (
-    DOCDB_DATABASE,
     GENERIC_AUDIT_COLLECTION,
     JIRA_AUDIT_COLLECTION,
     KIRO_AUDIT_COLLECTION,
@@ -41,7 +41,7 @@ logger = logging.getLogger("enterprise-mcp-gateway.audit")
 _audit_disabled = False
 
 # Sensitive field patterns for recursive redaction
-_SENSITIVE_FIELDS: Set[str] = {
+_SENSITIVE_FIELDS: set[str] = {
     "authorization", "api_key", "apikey", "token", "pat", "password",
     "secret", "cookie", "credential", "session", "private_key",
 }
@@ -94,8 +94,7 @@ def redact_for_log(data: Any, _depth: int = 0) -> Any:
 
     if isinstance(data, dict):
         result = {}
-        count = 0
-        for key, value in data.items():
+        for count, (key, value) in enumerate(data.items()):
             if count >= _MAX_COLLECTION_SIZE:
                 result["_truncated"] = f"{len(data) - count} more items"
                 break
@@ -103,7 +102,6 @@ def redact_for_log(data: Any, _depth: int = 0) -> Any:
                 result[key] = _mask_value(value)
             else:
                 result[key] = redact_for_log(value, _depth + 1)
-            count += 1
         return result
 
     if isinstance(data, (list, tuple)):
@@ -138,7 +136,7 @@ def _mask_value(value: Any) -> str:
 # Audit Entry Writing
 # ======================================================================
 
-def _write_audit_entry(collection_name: str, entry: Dict[str, Any]) -> bool:
+def _write_audit_entry(collection_name: str, entry: dict[str, Any]) -> bool:
     """Write an audit entry to DocumentDB.
 
     Fail-open: if writing fails, set _audit_disabled for the process
@@ -175,10 +173,10 @@ def _build_base_entry(
     tool_name: str,
     status: str,
     duration_ms: float,
-    request_data: Dict[str, Any],
-    response_summary: Dict[str, Any],
-    error_info: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    request_data: dict[str, Any],
+    response_summary: dict[str, Any],
+    error_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the base audit entry common to all pipelines.
 
     Args:
@@ -197,8 +195,8 @@ def _build_base_entry(
     caller = get_current_caller()
     caller_identity = caller.to_dict() if caller else {}
 
-    entry: Dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+    entry: dict[str, Any] = {
+        "timestamp": datetime.now(UTC).isoformat(),
         "tool": tool_name,
         "caller": caller_identity.get("consumer", "unknown"),
         "caller_identity": caller_identity,
@@ -237,7 +235,7 @@ def jira_audited(fn: Callable) -> Callable:
         start = time.time()
         status = "ok"
         result: Any = None
-        error_info: Optional[Dict[str, Any]] = None
+        error_info: dict[str, Any] | None = None
 
         try:
             result = fn(*args, **kwargs)
@@ -304,7 +302,7 @@ def audit_log(fn: Callable) -> Callable:
         start = time.time()
         status = "ok"
         result: Any = None
-        error_info: Optional[Dict[str, Any]] = None
+        error_info: dict[str, Any] | None = None
 
         try:
             result = fn(*args, **kwargs)
@@ -355,7 +353,7 @@ def log_access_audit(
     event_type: str,
     user_id: str,
     success: bool,
-    scope: Optional[Dict[str, Any]] = None,
+    scope: dict[str, Any] | None = None,
     denial_reason: str = "",
     client_ip: str = "",
     user_agent: str = "",
@@ -374,7 +372,7 @@ def log_access_audit(
         user_agent: Client user agent string.
     """
     entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "event_type": event_type,
         "user_id": user_id,
         "success": success,
@@ -397,7 +395,7 @@ def log_access_audit(
 # Helpers
 # ======================================================================
 
-def _summarize_result(result: Any) -> Dict[str, Any]:
+def _summarize_result(result: Any) -> dict[str, Any]:
     """Extract outcome-relevant fields from a tool result for audit.
 
     Whitelist-based extraction prevents large payloads in audit records.
@@ -411,7 +409,7 @@ def _summarize_result(result: Any) -> Dict[str, Any]:
     if not isinstance(result, dict):
         return {}
 
-    summary: Dict[str, Any] = {}
+    summary: dict[str, Any] = {}
     whitelist = {
         "success", "error", "issue_key", "issue_keys", "bre_id",
         "count", "total", "status", "message",
@@ -420,9 +418,9 @@ def _summarize_result(result: Any) -> Dict[str, Any]:
     for key in whitelist:
         if key in result:
             value = result[key]
-            if isinstance(value, (str, int, float, bool)):
-                summary[key] = value
-            elif isinstance(value, list) and len(value) <= 20:
+            if isinstance(value, (str, int, float, bool)) or (
+                isinstance(value, list) and len(value) <= 20
+            ):
                 summary[key] = value
             elif isinstance(value, list):
                 summary[key] = value[:20]

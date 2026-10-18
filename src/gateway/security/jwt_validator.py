@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from gateway.config.settings import (
     JWT_ALGORITHMS,
@@ -64,8 +64,8 @@ class JWTClaims:
     user_id: str = ""
     username: str = ""
     email: str = ""
-    groups: List[str] = field(default_factory=list)
-    raw_payload: Dict[str, Any] = field(default_factory=dict)
+    groups: list[str] = field(default_factory=list)
+    raw_payload: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_valid(self) -> bool:
@@ -73,7 +73,7 @@ class JWTClaims:
         return bool(self.user_id)
 
 
-def _extract_claim(payload: Dict[str, Any], candidate_keys: str) -> str:
+def _extract_claim(payload: dict[str, Any], candidate_keys: str) -> str:
     """Extract the first non-empty value from comma-separated candidate keys.
 
     This makes the validator IdP-agnostic: different IdPs use different claim
@@ -94,7 +94,7 @@ def _extract_claim(payload: Dict[str, Any], candidate_keys: str) -> str:
     return ""
 
 
-def _extract_groups(payload: Dict[str, Any], candidate_keys: str) -> List[str]:
+def _extract_groups(payload: dict[str, Any], candidate_keys: str) -> list[str]:
     """Extract group membership from JWT payload.
 
     Supports both list claims and comma-separated string claims.
@@ -165,7 +165,7 @@ def _unsafe_jwt_configuration() -> str:
     return ""
 
 
-def validate_jwt_token(token: str) -> Optional[JWTClaims]:
+def validate_jwt_token(token: str) -> JWTClaims | None:
     """Validate a JWT token and extract normalized claims.
 
     Never raises -- returns None on any failure (expired, bad signature,
@@ -200,7 +200,7 @@ def validate_jwt_token(token: str) -> Optional[JWTClaims]:
 
     try:
         # Build decode options
-        options: Dict[str, Any] = {
+        options: dict[str, Any] = {
             "verify_signature": True,
             "verify_aud": JWT_VERIFY_AUD,
             "verify_exp": True,
@@ -209,7 +209,7 @@ def validate_jwt_token(token: str) -> Optional[JWTClaims]:
             "verify_iss": True,
         }
 
-        decode_kwargs: Dict[str, Any] = {
+        decode_kwargs: dict[str, Any] = {
             "token": token,
             "key": JWT_SECRET,
             "algorithms": JWT_ALGORITHMS,

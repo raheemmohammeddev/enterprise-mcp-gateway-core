@@ -27,9 +27,9 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import threading
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any
 
 from gateway.config.settings import (
     GATEWAY_STDIO_TRUST_LOCAL,
@@ -63,7 +63,7 @@ _SQL_BLOCKED_KEYWORDS = re.compile(
 _SQL_MAX_LENGTH = 5000
 
 # Per-consumer write rate tracking
-_write_timestamps: Dict[str, List[float]] = {}
+_write_timestamps: dict[str, list[float]] = {}
 _write_lock = threading.Lock()
 
 
@@ -76,7 +76,7 @@ def _is_write_tool(tool_name: str) -> bool:
 # Individual Guardrail Checks
 # ======================================================================
 
-def check_tool_active(tool_name: str) -> Optional[Dict[str, Any]]:
+def check_tool_active(tool_name: str) -> dict[str, Any] | None:
     """Guardrail 0: Verify the tool is enabled in the registry.
 
     Fail-open: if the registry is unavailable, allow the call through.
@@ -95,8 +95,8 @@ def check_tool_active(tool_name: str) -> Optional[Dict[str, Any]]:
 
 
 def check_tool_authorization(
-    tool_name: str, allowed_tools: List[str]
-) -> Optional[Dict[str, Any]]:
+    tool_name: str, allowed_tools: list[str]
+) -> dict[str, Any] | None:
     """Guardrail 1: Validate tool against consumer's allowed_tools whitelist.
 
     Args:
@@ -120,9 +120,9 @@ def check_tool_authorization(
 
 def check_user_write_authorization(
     tool_name: str,
-    user_groups: List[str],
+    user_groups: list[str],
     consumer_type: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Guardrail 2: AD group gate for write operations (ai-agent consumers only).
 
     Requires the user's AD groups to include at least one write-authorized group.
@@ -166,7 +166,7 @@ def check_write_credential_attribution(
     tool_name: str,
     credential_source: str,
     consumer_type: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Guardrail 3: Require personal PAT for write operations.
 
     Prevents mutations under the shared service account identity. Write tools
@@ -199,7 +199,7 @@ def check_write_credential_attribution(
     }
 
 
-def validate_jql_input(tool_name: str, jql: str) -> Optional[Dict[str, Any]]:
+def validate_jql_input(tool_name: str, jql: str) -> dict[str, Any] | None:
     """Guardrail 4: Block SQL injection patterns in JQL input.
 
     Args:
@@ -230,7 +230,7 @@ def validate_jql_input(tool_name: str, jql: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def validate_sql_readonly(tool_name: str, sql: str) -> Optional[Dict[str, Any]]:
+def validate_sql_readonly(tool_name: str, sql: str) -> dict[str, Any] | None:
     """Guardrail 5: Enforce read-only SQL for Teradata tools.
 
     Only single SELECT or WITH statements are permitted. All DDL and DML
@@ -277,7 +277,10 @@ def validate_sql_readonly(tool_name: str, sql: str) -> Optional[Dict[str, Any]]:
         return {
             "error": "invalid_input",
             "guardrail": "sql_readonly",
-            "message": "SQL contains blocked DDL/DML keywords. Only read-only queries are permitted.",
+            "message": (
+                "SQL contains blocked DDL/DML keywords. Only read-only "
+                "queries are permitted."
+            ),
         }
 
     return None
@@ -285,10 +288,10 @@ def validate_sql_readonly(tool_name: str, sql: str) -> Optional[Dict[str, Any]]:
 
 def check_project_scope(
     tool_name: str,
-    projects: List[str],
+    projects: list[str],
     issue_key: str = "",
     jql: str = "",
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Guardrail 6: Validate project scope against consumer authorization.
 
     Extracts project keys from issue keys (e.g., 'PROJ-123' -> 'PROJ') and
@@ -307,7 +310,7 @@ def check_project_scope(
         return None
 
     # Extract project from issue key
-    unauthorized: List[str] = []
+    unauthorized: list[str] = []
     if issue_key and "-" in issue_key:
         project = issue_key.split("-")[0].upper()
         if project and project not in [p.upper() for p in projects]:
@@ -337,7 +340,7 @@ def check_project_scope(
 def check_write_rate_limit(
     consumer_id: str,
     tool_name: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Guardrail 7: Per-consumer write rate limiting.
 
     Separate sliding window for write operations (default: 5 writes per 600s),
@@ -389,7 +392,7 @@ def check_write_rate_limit(
 # Caller Scope Resolution
 # ======================================================================
 
-def caller_guardrail_scope(**overrides: Any) -> Dict[str, Any]:
+def caller_guardrail_scope(**overrides: Any) -> dict[str, Any]:
     """Resolve the current caller's guardrail scope into enforce_guardrails kwargs.
 
     The absence of a caller identity is never by itself a wildcard grant. The
@@ -410,7 +413,7 @@ def caller_guardrail_scope(**overrides: Any) -> Dict[str, Any]:
 
     caller = get_current_caller()
     if caller and caller.consumer:
-        scope: Dict[str, Any] = {
+        scope: dict[str, Any] = {
             "consumer_id": caller.consumer.consumer,
             "consumer_type": caller.consumer.type,
             "allowed_tools": caller.consumer.allowed_tools,
@@ -450,14 +453,14 @@ def enforce_guardrails(
     tool_name: str,
     consumer_id: str = "",
     consumer_type: str = "developer",
-    allowed_tools: Optional[List[str]] = None,
-    projects: Optional[List[str]] = None,
-    user_groups: Optional[List[str]] = None,
+    allowed_tools: list[str] | None = None,
+    projects: list[str] | None = None,
+    user_groups: list[str] | None = None,
     credential_source: str = "server_config",
     jql: str = "",
     sql: str = "",
     issue_key: str = "",
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Run the 7-step composable security guardrail pipeline.
 
     Each check is independent and returns None (pass) or a structured error

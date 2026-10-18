@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Raheem Mohammed"}
+    {name = "The Enterprise MCP Gateway Contributors"}
 ]
 keywords = ["mcp", "gateway", "rbac", "jwt", "enterprise", "ai-agent"]
 
@@ -23,7 +23,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "scripts"]
 
 [tool.ruff]
 line-length = 100

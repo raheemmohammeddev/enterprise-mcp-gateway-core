@@ -29,7 +29,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from gateway.config.settings import AWS_REGION, ENCRYPTION_ENABLED, KMS_KEY_ID
 
@@ -46,7 +46,7 @@ class EncryptionUnavailableError(RuntimeError):
     """
 
 
-def encrypt_token(plaintext: str, record_id: str = "") -> Dict[str, Any]:
+def encrypt_token(plaintext: str, record_id: str = "") -> dict[str, Any]:
     """Encrypt a token using AWS KMS envelope encryption.
 
     Attempts KMS first, then Fernet. There is NO plaintext fallback: when
@@ -104,7 +104,7 @@ def encrypt_token(plaintext: str, record_id: str = "") -> Dict[str, Any]:
     )
 
 
-def decrypt_token(encrypted_data: Dict[str, Any], record_id: str = "") -> Optional[str]:
+def decrypt_token(encrypted_data: dict[str, Any], record_id: str = "") -> str | None:
     """Decrypt a token from its stored encrypted form.
 
     Args:
@@ -148,7 +148,7 @@ def decrypt_token(encrypted_data: Dict[str, Any], record_id: str = "") -> Option
 # KMS Envelope Encryption (Production)
 # ======================================================================
 
-def _encrypt_with_kms(plaintext: str, record_id: str = "") -> Dict[str, Any]:
+def _encrypt_with_kms(plaintext: str, record_id: str = "") -> dict[str, Any]:
     """Encrypt using AWS KMS envelope encryption (AES-256-GCM).
 
     Args:
@@ -158,7 +158,6 @@ def _encrypt_with_kms(plaintext: str, record_id: str = "") -> Dict[str, Any]:
     Raises:
         Exception: If KMS or cryptography operations fail.
     """
-    import boto3
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     kms_client = _get_kms_client()
@@ -183,7 +182,7 @@ def _encrypt_with_kms(plaintext: str, record_id: str = "") -> Dict[str, Any]:
     }
 
 
-def _decrypt_with_kms(encrypted_data: Dict[str, Any], record_id: str = "") -> str:
+def _decrypt_with_kms(encrypted_data: dict[str, Any], record_id: str = "") -> str:
     """Decrypt using AWS KMS envelope encryption.
 
     Args:
@@ -197,7 +196,6 @@ def _decrypt_with_kms(encrypted_data: Dict[str, Any], record_id: str = "") -> st
         Exception: If KMS or cryptography operations fail, including an
             associated-data mismatch.
     """
-    import boto3
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     kms_client = _get_kms_client()
@@ -242,7 +240,7 @@ def _get_kms_client():
 # Fernet Fallback (Local Development Only)
 # ======================================================================
 
-def _encrypt_with_fernet(plaintext: str, record_id: str = "") -> Dict[str, Any]:
+def _encrypt_with_fernet(plaintext: str, record_id: str = "") -> dict[str, Any]:
     """Fallback: Fernet symmetric encryption (local dev only).
 
     Raises:
@@ -268,7 +266,7 @@ def _encrypt_with_fernet(plaintext: str, record_id: str = "") -> Dict[str, Any]:
     return {"ciphertext": ciphertext.decode(), "method": "fernet"}
 
 
-def _decrypt_with_fernet(encrypted_data: Dict[str, Any]) -> str:
+def _decrypt_with_fernet(encrypted_data: dict[str, Any]) -> str:
     """Fallback: Fernet decryption."""
     from cryptography.fernet import Fernet
 

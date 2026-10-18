@@ -4,14 +4,12 @@ Enterprise MCP Gateway - Audit Logger Unit Tests.
 Tests credential fingerprinting, log sanitization, and result summarization.
 """
 
-import pytest
 
 from gateway.audit.loggers import (
     _summarize_result,
     redact_for_log,
     secret_fingerprint,
 )
-
 
 # ======================================================================
 # Credential Fingerprinting

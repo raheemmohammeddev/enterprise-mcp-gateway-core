@@ -16,18 +16,17 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 import threading
+import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
 
-from gateway.config.settings import CONSUMERS_COLLECTION, DOCDB_DATABASE
+from gateway.config.settings import CONSUMERS_COLLECTION
 
 logger = logging.getLogger("enterprise-mcp-gateway.consumer-registry")
 
 # Cache TTL for the consumer registry (seconds)
 _REGISTRY_CACHE_TTL = 300
-_registry_cache: Dict[str, "ConsumerProfile"] = {}
+_registry_cache: dict[str, ConsumerProfile] = {}
 _registry_loaded_at: float = 0.0
 _registry_lock = threading.Lock()
 
@@ -49,9 +48,9 @@ class ConsumerProfile:
     api_key: str = ""
     consumer: str = "unknown"
     type: str = "developer"
-    allowed_tools: List[str] = field(default_factory=lambda: ["*"])
+    allowed_tools: list[str] = field(default_factory=lambda: ["*"])
     rate_limit: int = 15
-    projects: List[str] = field(default_factory=lambda: ["*"])
+    projects: list[str] = field(default_factory=lambda: ["*"])
     is_active: bool = True
 
     def can_access_tool(self, tool_name: str) -> bool:
@@ -81,7 +80,7 @@ class ConsumerProfile:
         return project_key.upper() in [p.upper() for p in self.projects]
 
 
-def _load_from_docdb() -> Optional[Dict[str, ConsumerProfile]]:
+def _load_from_docdb() -> dict[str, ConsumerProfile] | None:
     """Load consumer registry from DocumentDB.
 
     Returns:
@@ -93,7 +92,7 @@ def _load_from_docdb() -> Optional[Dict[str, ConsumerProfile]]:
         if db is None:
             return None
 
-        registry: Dict[str, ConsumerProfile] = {}
+        registry: dict[str, ConsumerProfile] = {}
         for doc in db[CONSUMERS_COLLECTION].find({"is_active": {"$ne": False}}):
             api_key = doc.get("api_key", "")
             if api_key:
@@ -113,7 +112,7 @@ def _load_from_docdb() -> Optional[Dict[str, ConsumerProfile]]:
         return None
 
 
-def _load_from_file() -> Optional[Dict[str, ConsumerProfile]]:
+def _load_from_file() -> dict[str, ConsumerProfile] | None:
     """Load consumer registry from a local JSON file (development fallback).
 
     Returns:
@@ -127,7 +126,7 @@ def _load_from_file() -> Optional[Dict[str, ConsumerProfile]]:
         with open(filepath) as f:
             data = json.load(f)
 
-        registry: Dict[str, ConsumerProfile] = {}
+        registry: dict[str, ConsumerProfile] = {}
         for entry in data if isinstance(data, list) else data.get("consumers", []):
             api_key = entry.get("api_key", "")
             if api_key:
@@ -147,7 +146,7 @@ def _load_from_file() -> Optional[Dict[str, ConsumerProfile]]:
         return None
 
 
-def _load_consumer_registry() -> Dict[str, ConsumerProfile]:
+def _load_consumer_registry() -> dict[str, ConsumerProfile]:
     """Load the consumer registry with multi-source fallback.
 
     Priority: DocumentDB -> Local file -> Empty (with warning).
@@ -170,7 +169,7 @@ def _load_consumer_registry() -> Dict[str, ConsumerProfile]:
     return {}
 
 
-def _ensure_registry_loaded() -> Dict[str, ConsumerProfile]:
+def _ensure_registry_loaded() -> dict[str, ConsumerProfile]:
     """Return the cached registry, reloading if expired."""
     global _registry_cache, _registry_loaded_at
 
@@ -188,7 +187,7 @@ def _ensure_registry_loaded() -> Dict[str, ConsumerProfile]:
         return _registry_cache
 
 
-def authenticate(api_key: Optional[str]) -> Optional[ConsumerProfile]:
+def authenticate(api_key: str | None) -> ConsumerProfile | None:
     """Authenticate a consumer by API key.
 
     Args:
@@ -206,7 +205,7 @@ def authenticate(api_key: Optional[str]) -> Optional[ConsumerProfile]:
     return registry.get(api_key)
 
 
-def authorize_tool(consumer: ConsumerProfile, tool_name: str) -> Tuple[bool, str]:
+def authorize_tool(consumer: ConsumerProfile, tool_name: str) -> tuple[bool, str]:
     """Check if a consumer is authorized to invoke a specific tool.
 
     Args:
@@ -221,7 +220,7 @@ def authorize_tool(consumer: ConsumerProfile, tool_name: str) -> Tuple[bool, str
     return False, f"Consumer '{consumer.consumer}' is not authorized for tool '{tool_name}'"
 
 
-def authorize_project(consumer: ConsumerProfile, project_key: str) -> Tuple[bool, str]:
+def authorize_project(consumer: ConsumerProfile, project_key: str) -> tuple[bool, str]:
     """Check if a consumer is authorized to access a specific project.
 
     Args:

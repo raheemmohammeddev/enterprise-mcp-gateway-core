@@ -131,7 +131,7 @@ class _FakeSession:
             if self._visualization_error:
                 raise RuntimeError(self._visualization_error)
             return [{"relationships": [_FakeRelationship("Service", "OWNED_BY", "Owner")]}]
-        raise AssertionError("unexpected query: %s" % query)
+        raise AssertionError(f"unexpected query: {query}")
 
 
 class _FakeDriver:
@@ -279,14 +279,19 @@ def valid_consumer(monkeypatch):
     return profile
 
 
-def _rpc(client, method):
+def _rpc(client, method, params=None):
+    body = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params is not None:
+        body["params"] = params
     resp = client.post(
         "/mcp",
-        json={"jsonrpc": "2.0", "id": 1, "method": method},
+        json=body,
         headers={**_MCP_HEADERS, "X-MCP-API-Key": "test-key"},
     )
     assert resp.status_code == 200
-    return _parse_sse(resp.text)["result"]
+    payload = _parse_sse(resp.text)
+    assert "error" not in payload, payload.get("error")
+    return payload["result"]
 
 
 class TestAdvertisedCapabilities:
@@ -307,3 +312,97 @@ class TestAdvertisedCapabilities:
         assert len(names) == EXPECTED_TOOL_COUNT
         assert "neo4j_schema_resource" not in names
         assert CYPHER_PROMPT_NAME not in names
+
+
+# ======================================================================
+# Served Payloads Over /mcp
+# ======================================================================
+
+@pytest.fixture
+def scoped_consumer(monkeypatch):
+    """An API key that resolves to a consumer holding one unrelated tool."""
+    profile = ConsumerProfile(
+        api_key="test-key",
+        consumer="test",
+        type="rest-api",
+        allowed_tools=["get_jira_issues"],
+        rate_limit=30,
+        projects=["*"],
+    )
+
+    def fake_authenticate(api_key):
+        return profile if api_key == "test-key" else None
+
+    monkeypatch.setattr(auth_module, "authenticate", fake_authenticate)
+    return profile
+
+
+class TestServedPayloads:
+    """Advertising a resource is not the same as being able to read it.
+
+    FastMCP requires resource contents to be str/bytes and a prompt to render
+    to text, so a dict-returning handler registered directly fails at read
+    time even though it lists correctly. These pin the read and get paths.
+    """
+
+    def test_resources_read_returns_the_schema_document(
+        self, valid_consumer, fake_driver
+    ):
+        with TestClient(create_app()) as client:
+            result = _rpc(
+                client, "resources/read", {"uri": SCHEMA_RESOURCE_URI}
+            )
+
+        contents = result["contents"][0]
+        assert contents["mimeType"] == "application/json"
+        schema = json.loads(contents["text"])
+        assert schema["labels"] == ["Service", "Owner"]
+        assert schema["relationship_patterns"] == [
+            {"start": "Service", "type": "OWNED_BY", "end": "Owner"}
+        ]
+
+    def test_resources_read_carries_a_guardrail_denial(
+        self, scoped_consumer, fake_driver
+    ):
+        with TestClient(create_app()) as client:
+            result = _rpc(
+                client, "resources/read", {"uri": SCHEMA_RESOURCE_URI}
+            )
+
+        denial = json.loads(result["contents"][0]["text"])
+        assert denial["error"] == "forbidden"
+        assert denial["guardrail"] == "tool_authorization"
+
+    def test_prompts_get_returns_the_guidance_text(
+        self, valid_consumer, fake_driver
+    ):
+        with TestClient(create_app()) as client:
+            result = _rpc(
+                client,
+                "prompts/get",
+                {
+                    "name": CYPHER_PROMPT_NAME,
+                    "arguments": {"question": "which services exist?"},
+                },
+            )
+
+        text = result["messages"][0]["content"]["text"]
+        assert "(:Service)-[:OWNED_BY]->(:Owner)" in text
+        assert "which services exist?" in text
+
+    def test_prompts_get_carries_a_guardrail_denial(
+        self, scoped_consumer, fake_driver
+    ):
+        with TestClient(create_app()) as client:
+            result = _rpc(
+                client,
+                "prompts/get",
+                {
+                    "name": CYPHER_PROMPT_NAME,
+                    "arguments": {"question": "which services exist?"},
+                },
+            )
+
+        denial = json.loads(result["messages"][0]["content"]["text"])
+        assert denial["error"] == "forbidden"
+        assert denial["guardrail"] == "tool_authorization"

@@ -5,7 +5,6 @@ Tests the 7-step composable security guardrail pipeline with coverage
 for pass/block scenarios on each individual check and the orchestrator.
 """
 
-import pytest
 
 from gateway.guardrails.pipeline import (
     check_project_scope,
@@ -18,7 +17,6 @@ from gateway.guardrails.pipeline import (
     validate_jql_input,
     validate_sql_readonly,
 )
-
 
 # ======================================================================
 # Guardrail 0: Tool Active Check
@@ -39,7 +37,8 @@ class TestToolAuthorization:
         assert check_tool_authorization("jira_create_issue", ["*"]) is None
 
     def test_exact_match_allows(self):
-        assert check_tool_authorization("jira_create_issue", ["jira_create_issue", "jira_get_issue_details"]) is None
+        allowed = ["jira_create_issue", "jira_get_issue_details"]
+        assert check_tool_authorization("jira_create_issue", allowed) is None
 
     def test_missing_tool_blocks(self):
         result = check_tool_authorization("jira_create_issue", ["neo4j_run_query"])
@@ -98,21 +97,31 @@ class TestUserWriteAuthorization:
 
 class TestWriteCredentialAttribution:
     def test_user_pat_passes(self):
-        assert check_write_credential_attribution("jira_create_issue", "request_header", "ai-agent") is None
+        assert check_write_credential_attribution(
+            "jira_create_issue", "request_header", "ai-agent"
+        ) is None
 
     def test_profile_pat_passes(self):
-        assert check_write_credential_attribution("jira_create_issue", "profile", "ai-agent") is None
+        assert check_write_credential_attribution(
+            "jira_create_issue", "profile", "ai-agent"
+        ) is None
 
     def test_server_config_blocks(self):
-        result = check_write_credential_attribution("jira_create_issue", "server_config", "ai-agent")
+        result = check_write_credential_attribution(
+            "jira_create_issue", "server_config", "ai-agent"
+        )
         assert result is not None
         assert result["guardrail"] == "write_credential_attribution"
 
     def test_read_tool_passes(self):
-        assert check_write_credential_attribution("get_jira_issues", "server_config", "ai-agent") is None
+        assert check_write_credential_attribution(
+            "get_jira_issues", "server_config", "ai-agent"
+        ) is None
 
     def test_non_agent_passes(self):
-        assert check_write_credential_attribution("jira_create_issue", "server_config", "developer") is None
+        assert check_write_credential_attribution(
+            "jira_create_issue", "server_config", "developer"
+        ) is None
 
 
 # ======================================================================
@@ -158,10 +167,12 @@ class TestSqlReadOnly:
         assert validate_sql_readonly("teradata_read_query", "SELECT * FROM employees") is None
 
     def test_with_passes(self):
-        assert validate_sql_readonly("teradata_read_query", "WITH cte AS (SELECT 1) SELECT * FROM cte") is None
+        sql = "WITH cte AS (SELECT 1) SELECT * FROM cte"
+        assert validate_sql_readonly("teradata_read_query", sql) is None
 
     def test_insert_blocks(self):
-        result = validate_sql_readonly("teradata_read_query", "INSERT INTO users VALUES (1, 'test')")
+        sql = "INSERT INTO users VALUES (1, 'test')"
+        result = validate_sql_readonly("teradata_read_query", sql)
         assert result is not None
         assert result["guardrail"] == "sql_readonly"
 

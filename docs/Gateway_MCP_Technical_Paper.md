@@ -1,6 +1,6 @@
 # Enterprise-Grade Model Context Protocol: Architecting a Multi-Tenant Gateway with Dynamic RBAC, Multi-Backend Integration, and Defense-in-Depth Observability
 
-**Author:** Raheem Mohammed
+**Author:** The Enterprise MCP Gateway Contributors
 **Date:** September 2026
 **Document Classification:** Technical Whitepaper -- Academic & Portfolio Submission Ready
 **Terminology Note:** This paper uses vendor-neutral and anonymized terminology. All open-source protocols, standards, and core technology names are retained as-is.
@@ -9,7 +9,7 @@
 
 ## Abstract
 
-The Model Context Protocol (MCP) has emerged as the de facto standard for connecting large language models (LLMs) and AI agents to external tools and data sources. However, deploying MCP servers in regulated enterprise environments exposes fundamental gaps in the open-source specification: the protocol defines no authentication, no authorization, no audit trail, and no rate governance. This paper presents the architecture of an Enterprise MCP Gateway that closes these gaps through a layered, production-hardened design. This reference implementation registers 15 MCP tools across 4 backend modules -- project management (Jira), graph databases (Neo4j), analytical data warehouses (Teradata), and a business rule engine / reference data service whose 4 tools are stubs pending API configuration -- with DocumentDB as the configuration and audit store, for multiple consumer classes: AI agents, IDE-based developer copilots (Kiro IDE), REST API clients, and batch ETL processes. The security perimeter implements three-mode JWT authentication, Active Directory group-based role-based access control (RBAC) with five graduated permission tiers, seven composable security guardrails enforced per request, and AES-256-GCM envelope encryption via AWS KMS for credential storage. Observability is addressed through three parallel audit pipelines writing to DocumentDB, structured log sanitization with SHA-256 credential fingerprinting, and two-layer sliding-window rate limiting (per-consumer and per-tool-group). All governance parameters -- rate limits, tool availability, guardrail thresholds, and backend routing -- are dynamically configurable via DocumentDB without redeployment, propagating across horizontally-scaled pods within 30 seconds. The system has been deployed across four environments (sandbox, development, UAT, production) on Amazon EKS with CI/CD-driven feature flags, and is presented to a Solution Review and Planning Board (SRPB) for enterprise architecture approval. This paper maps the gateway's architectural patterns to graduate-level learning outcomes in natural language processing, deep learning systems, and distributed AI architectures, demonstrating applied mastery of the infrastructure that enables responsible enterprise AI deployment.
+The Model Context Protocol (MCP) has emerged as the de facto standard for connecting large language models (LLMs) and AI agents to external tools and data sources. However, deploying MCP servers in regulated enterprise environments exposes fundamental gaps in the open-source specification: the protocol defines no authentication, no authorization, no audit trail, and no rate governance. This paper presents the architecture of an Enterprise MCP Gateway that closes these gaps through a layered, production-hardened design. This reference implementation registers 15 MCP tools across 4 backend modules -- project management (Jira), graph databases (Neo4j), analytical data warehouses (Teradata), and a business rule engine / reference data service whose 4 tools are stubs pending API configuration -- with DocumentDB as the configuration and audit store, for multiple consumer classes: AI agents, IDE-based developer copilots (Kiro IDE), REST API clients, and batch ETL processes. The security perimeter implements three-mode JWT authentication, Active Directory group-based role-based access control (RBAC) with five graduated permission tiers, seven composable security guardrails enforced per request, and AES-256-GCM envelope encryption via AWS KMS for credential storage. Observability is addressed through three parallel audit pipelines writing to DocumentDB, structured log sanitization with SHA-256 credential fingerprinting, and two-layer sliding-window rate limiting (per-consumer and per-tool-group). All governance parameters -- rate limits, tool availability, guardrail thresholds, and backend routing -- are dynamically configurable via DocumentDB without redeployment, propagating across horizontally-scaled pods within 30 seconds. The system has been deployed across four environments (sandbox, development, UAT, production) on Amazon EKS with CI/CD-driven feature flags, and is presented to an enterprise architecture review board for approval. This paper maps the gateway's architectural patterns to graduate-level learning outcomes in natural language processing, deep learning systems, and distributed AI architectures, demonstrating applied mastery of the infrastructure that enables responsible enterprise AI deployment.
 
 ---
 
@@ -358,7 +358,7 @@ The gateway implements a two-layer rate limiter protecting both individual consu
 Each consumer's rate limit is embedded in their RBAC role (e.g., 15 calls/min for developers, 30 calls/min for admins). The limiter tracks timestamps per `consumer_id:tool_group` pair in a sliding window. When a consumer exceeds their allocation, the gateway returns a structured error with `retry_after_seconds` and `limit_type: "consumer"`.
 
 **Layer 2 -- Global Per-Tool-Group Rate Limiting (Outer):**
-Each tool group (jira, brf, neo4j, teradata) has a per-group rate limit (code defaults: 30 calls/min for Jira via `RATE_LIMIT_JIRA`, 59 calls/min for unlisted groups via `RATE_LIMIT_DEFAULT`). This limit applies across all consumers of a single pod, protecting the backend from aggregate overload per replica; it is not a cluster-wide cap.
+Each tool group (jira, bre, neo4j, teradata) has a per-group rate limit (code defaults: 30 calls/min for Jira via `RATE_LIMIT_JIRA`, 59 calls/min for unlisted groups via `RATE_LIMIT_DEFAULT`). This limit applies across all consumers of a single pod, protecting the backend from aggregate overload per replica; it is not a cluster-wide cap.
 
 Both layers use a sliding-window algorithm with in-memory timestamp tracking. The `@rate_limited` decorator wraps every tool function, checking Layer 1 then Layer 2 in sequence. Both must pass for the call to proceed.
 
@@ -456,7 +456,7 @@ A distinctive architectural choice is the use of DocumentDB as the runtime confi
 | `mcp_tool_groups` | Tool group rate limits | 300s |
 | `mcp_jira_projects` | Project scope definitions | 300s |
 | `mcp_gateway_config` | Guardrails, backend mode, cache TTL, write AD groups | 30s |
-| `mcp_brf_defaulting_rules` | Cohort-based field suggestion rules | 300s |
+| `mcp_bre_defaulting_rules` | Cohort-based field suggestion rules | 300s |
 | `MCPJiraAudit` | Jira tool audit trail | N/A (write) |
 | `MCPAuditLog` | Generic tool audit trail | N/A (write) |
 | `MCPKiroAudit` | Kiro access audit trail | N/A (write) |
@@ -496,7 +496,7 @@ The sidecar is supervised by the container entrypoint with an exponential backof
 The Neo4j knowledge graph is accessed via the official `neo4j` Python driver over the Bolt protocol, with multi-instance support (production and experimentation instances). Read-only access is enforced through regex-based Cypher query validation and automatic `LIMIT` clause injection. Schema introspection results are cached with a configurable TTL.
 
 **Pattern D -- Reference Data Service Client (Business Rule Engine):**
-The Business Rule Engine is accessed through a custom REST client that communicates with a Reference Data Management (RDM) API. The client handles the domain-specific workflow: access pre-checks, document retrieval, picklist reference data loading, draft validation with cross-referencing against cached picklist data, document creation/update, status transitions, and inter-system attachment transfer.
+The Business Rule Engine is accessed through a custom REST client that communicates with a Master Reference Data Service API. The client handles the domain-specific workflow: access pre-checks, document retrieval, picklist reference data loading, draft validation with cross-referencing against cached picklist data, document creation/update, status transitions, and inter-system attachment transfer.
 
 ### 4.2 Enterprise LLM Orchestrator Integration
 

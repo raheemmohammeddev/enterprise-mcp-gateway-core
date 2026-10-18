@@ -29,6 +29,9 @@ env/
 # Docker
 docker-compose.override.yml
 
+# Linters
+.ruff_cache/
+.mypy_cache/
 # Test / Coverage
 .pytest_cache/
 htmlcov/
@@ -47,3 +50,5 @@ credentials.json
 *.pem
 *.key
 docs/*.pdf
+# Workflow artifacts (never commit)
+.agents/

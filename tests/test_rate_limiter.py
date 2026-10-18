@@ -10,12 +10,12 @@ import time
 import pytest
 
 from gateway.ratelimit.limiter import (
+    _call_timestamps,
     _check_consumer_rate_limit,
     _consumer_timestamps,
-    _call_timestamps,
+    _get_group_for_tool,
     _record_call,
     check_rate_limit,
-    _get_group_for_tool,
 )
 
 

@@ -39,9 +39,8 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
-import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -126,7 +125,7 @@ def _is_mcp_rpc_path(path: str) -> bool:
 
 async def _correlated_rpc_id(
     request: Request, receive: Receive
-) -> Optional[Union[int, str]]:
+) -> int | str | None:
     """Read the inbound JSON-RPC id from the request body, or return None.
 
     INVARIANT that makes consuming the body safe: this runs only on a failure
@@ -229,11 +228,11 @@ class CallerIdentity:
     user_id: str = ""
     username: str = ""
     user_email: str = ""
-    consumer: Optional[ConsumerProfile] = None
-    user_groups: List[str] = field(default_factory=list)
+    consumer: ConsumerProfile | None = None
+    user_groups: list[str] = field(default_factory=list)
     credential_fingerprint: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to a dict suitable for audit logging."""
         return {
             "app_name": self.app_name,
@@ -261,10 +260,10 @@ class CallerIdentity:
 # Context Variables (async-safe per-request state)
 # ======================================================================
 
-_current_caller_var: contextvars.ContextVar[Optional[CallerIdentity]] = (
+_current_caller_var: contextvars.ContextVar[CallerIdentity | None] = (
     contextvars.ContextVar("current_caller", default=None)
 )
-_jira_pat_var: contextvars.ContextVar[Optional[str]] = (
+_jira_pat_var: contextvars.ContextVar[str | None] = (
     contextvars.ContextVar("jira_pat", default=None)
 )
 _jira_pat_source_var: contextvars.ContextVar[str] = (
@@ -272,7 +271,7 @@ _jira_pat_source_var: contextvars.ContextVar[str] = (
 )
 
 
-def get_current_caller() -> Optional[CallerIdentity]:
+def get_current_caller() -> CallerIdentity | None:
     """Get the current request's caller identity (async-safe)."""
     return _current_caller_var.get()
 
@@ -283,7 +282,7 @@ def get_current_user_pid() -> str:
     return caller.user_id if caller else ""
 
 
-def get_current_jira_pat() -> Optional[str]:
+def get_current_jira_pat() -> str | None:
     """Get the Jira PAT for the current request."""
     return _jira_pat_var.get()
 
@@ -352,8 +351,8 @@ class AuthMiddleware:
         app_name = request.headers.get("x-mcp-app-name", "")
         auth_token = request.headers.get("x-mcp-auth-token", "")
 
-        consumer: Optional[ConsumerProfile] = None
-        jwt_claims: Optional[JWTClaims] = None
+        consumer: ConsumerProfile | None = None
+        jwt_claims: JWTClaims | None = None
         auth_mode = "none"
 
         # -- Kiro IDE Detection (no API key, app starts with 'kiro-') --

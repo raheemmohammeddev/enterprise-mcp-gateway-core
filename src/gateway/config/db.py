@@ -9,7 +9,6 @@ callers to degrade gracefully.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from gateway.config.settings import (
     DOCDB_DATABASE,

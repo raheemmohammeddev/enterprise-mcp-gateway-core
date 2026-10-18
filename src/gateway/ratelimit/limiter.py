@@ -36,9 +36,10 @@ from __future__ import annotations
 
 import functools
 import logging
-import time
 import threading
-from typing import Any, Callable, Dict, List, Optional
+import time
+from collections.abc import Callable
+from typing import Any
 
 from gateway.config.settings import (
     RATE_LIMIT_BRE,
@@ -52,12 +53,12 @@ from gateway.config.settings import (
 logger = logging.getLogger("enterprise-mcp-gateway.ratelimit")
 
 # In-memory sliding window stores
-_call_timestamps: Dict[str, List[float]] = {}      # group -> [timestamps]
-_consumer_timestamps: Dict[str, List[float]] = {}   # consumer:group -> [timestamps]
+_call_timestamps: dict[str, list[float]] = {}      # group -> [timestamps]
+_consumer_timestamps: dict[str, list[float]] = {}   # consumer:group -> [timestamps]
 _lock = threading.Lock()
 
 # Tool group rate limits (configurable via DocumentDB in production)
-_GROUP_LIMITS: Dict[str, int] = {
+_GROUP_LIMITS: dict[str, int] = {
     "jira": RATE_LIMIT_JIRA,
     "bre": RATE_LIMIT_BRE,
     "neo4j": RATE_LIMIT_NEO4J,
@@ -101,7 +102,7 @@ def _get_group_for_tool(tool_name: str) -> str:
     return "default"
 
 
-def _get_consumer_rate_limit() -> Optional[int]:
+def _get_consumer_rate_limit() -> int | None:
     """Get the current consumer's rate_limit from the auth middleware context.
 
     Returns the consumer's rate_limit field, or None if not available.
@@ -134,7 +135,7 @@ def _get_consumer_id() -> str:
 
 def _check_consumer_rate_limit(
     consumer_id: str, group: str, consumer_limit: int
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Check the per-consumer rate limit (Layer 1 / inner layer).
 
     Uses exact sliding-window semantics with per-request timestamps:
@@ -185,7 +186,7 @@ def _check_consumer_rate_limit(
 # Layer 2: Global Per-Tool-Group Rate Limiting
 # ======================================================================
 
-def check_rate_limit(group: str) -> Optional[Dict[str, Any]]:
+def check_rate_limit(group: str) -> dict[str, Any] | None:
     """Check the global per-group rate limit (Layer 2 / outer layer).
 
     Args:

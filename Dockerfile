@@ -3,7 +3,7 @@
 
 FROM python:3.12-slim AS base
 
-LABEL maintainer="Raheem Mohammed"
+LABEL maintainer="The Enterprise MCP Gateway Contributors"
 LABEL description="Enterprise MCP Gateway with RBAC, Multi-Backend, and Audit"
 
 WORKDIR /app

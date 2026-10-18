@@ -19,16 +19,21 @@ Self-disables when TERADATA_MCP_ENABLED=false.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
 from gateway.audit.loggers import audit_log
-from gateway.config.settings import TERADATA_MCP_ENABLED, TERADATA_MCP_TIMEOUT_SECONDS, TERADATA_MCP_URL
+from gateway.config.settings import (
+    TERADATA_MCP_ENABLED,
+    TERADATA_MCP_TIMEOUT_SECONDS,
+    TERADATA_MCP_URL,
+)
 from gateway.ratelimit.limiter import rate_limited
 
 logger = logging.getLogger("enterprise-mcp-gateway.teradata")
@@ -73,28 +78,34 @@ class TeradataMCPClient:
     Teradata queries that are rate-limited at the gateway level).
     """
 
-    def __init__(self, url: Optional[str] = None, timeout: Optional[int] = None):
+    def __init__(self, url: str | None = None, timeout: int | None = None):
         self.url = url or TERADATA_MCP_URL
         self.timeout = timeout or TERADATA_MCP_TIMEOUT_SECONDS
-        self._session_id: Optional[str] = None
+        self._session_id: str | None = None
         self._lock = threading.Lock()
 
-    def _headers(self) -> Dict[str, str]:
-        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         return headers
 
-    def _rpc(self, client: httpx.Client, method: str, params: Optional[dict],
+    def _rpc(self, client: httpx.Client, method: str, params: dict | None,
              is_notification: bool = False) -> tuple:
-        payload: Dict[str, Any] = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         if not is_notification:
             payload["id"] = str(uuid.uuid4())
         resp = client.post(self.url, json=payload, headers=self._headers())
         sid = resp.headers.get("Mcp-Session-Id") or resp.headers.get("mcp-session-id")
         if sid:
             self._session_id = sid
-        body = {} if is_notification else _parse_response(resp.text, resp.headers.get("content-type", ""))
+        if is_notification:
+            body = {}
+        else:
+            body = _parse_response(resp.text, resp.headers.get("content-type", ""))
         return body, resp
 
     def _handshake(self, client: httpx.Client) -> None:
@@ -108,12 +119,10 @@ class TeradataMCPClient:
         body, resp = self._rpc(client, "initialize", init_params)
         if resp.status_code >= 400 or body.get("error"):
             raise RuntimeError(f"initialize failed (HTTP {resp.status_code})")
-        try:
+        with contextlib.suppress(Exception):
             self._rpc(client, "notifications/initialized", {}, is_notification=True)
-        except Exception:
-            pass
 
-    def call_tool(self, name: str, arguments: Optional[dict] = None) -> dict:
+    def call_tool(self, name: str, arguments: dict | None = None) -> dict:
         """Call a sidecar tool with automatic session management.
 
         Retries once through a fresh handshake on session expiry.
@@ -128,14 +137,13 @@ class TeradataMCPClient:
         arguments = arguments or {}
         params = {"name": name, "arguments": arguments}
         try:
-            with self._lock:
-                with httpx.Client(timeout=self.timeout) as client:
-                    if not self._session_id:
-                        self._handshake(client)
+            with self._lock, httpx.Client(timeout=self.timeout) as client:
+                if not self._session_id:
+                    self._handshake(client)
+                body, resp = self._rpc(client, "tools/call", params)
+                if resp.status_code in (400, 404) and not body.get("result"):
+                    self._handshake(client)
                     body, resp = self._rpc(client, "tools/call", params)
-                    if resp.status_code in (400, 404) and not body.get("result"):
-                        self._handshake(client)
-                        body, resp = self._rpc(client, "tools/call", params)
 
             if body.get("error"):
                 err = body["error"]
@@ -143,7 +151,10 @@ class TeradataMCPClient:
                 return {"error": "teradata_mcp_error", "message": _truncate(msg), "tool": name}
             return self._extract_result(body.get("result", {}))
         except httpx.TimeoutException:
-            return {"error": "teradata_unavailable", "message": f"Sidecar timed out after {self.timeout}s."}
+            return {
+                "error": "teradata_unavailable",
+                "message": f"Sidecar timed out after {self.timeout}s.",
+            }
         except httpx.HTTPError as exc:
             return {"error": "teradata_unavailable", "message": f"Sidecar unreachable: {exc}"}
         except Exception as exc:
@@ -164,7 +175,7 @@ class TeradataMCPClient:
                     return {"result": block["text"]}
         return result
 
-    def health(self, timeout: Optional[int] = None) -> dict:
+    def health(self, timeout: int | None = None) -> dict:
         """Probe the sidecar with a handshake."""
         probe_timeout = timeout or min(self.timeout, 10)
         try:
@@ -176,7 +187,7 @@ class TeradataMCPClient:
 
 
 # Singleton client
-_client: Optional[TeradataMCPClient] = None
+_client: TeradataMCPClient | None = None
 
 
 def _get_client() -> TeradataMCPClient:
@@ -192,7 +203,7 @@ def _get_client() -> TeradataMCPClient:
 
 @audit_log
 @rate_limited
-def teradata_read_query(sql: str, row_limit: int = 1000) -> Dict[str, Any]:
+def teradata_read_query(sql: str, row_limit: int = 1000) -> dict[str, Any]:
     """Execute a read-only SQL query against the Teradata data warehouse.
 
     Args:
@@ -221,7 +232,7 @@ def teradata_read_query(sql: str, row_limit: int = 1000) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def teradata_list_databases() -> Dict[str, Any]:
+def teradata_list_databases() -> dict[str, Any]:
     """List available Teradata databases."""
     from gateway.guardrails.pipeline import caller_guardrail_scope, enforce_guardrails
 
@@ -242,7 +253,7 @@ def teradata_list_databases() -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def teradata_list_tables(database: str) -> Dict[str, Any]:
+def teradata_list_tables(database: str) -> dict[str, Any]:
     """List tables and views in a Teradata database.
 
     Args:

@@ -4,7 +4,7 @@ Enterprise MCP Gateway - JWT Validator Unit Tests.
 Tests IdP-agnostic JWT validation, claim extraction, and consumer type checks.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from jose import jwt as jose_jwt
@@ -17,7 +17,6 @@ from gateway.security.jwt_validator import (
     is_jwt_required_for_consumer,
     validate_jwt_token,
 )
-
 
 # ======================================================================
 # JWTClaims Dataclass
@@ -142,7 +141,7 @@ _TEST_AUDIENCE = "mcp-gateway"
 
 def _mint_token(algorithm="HS512", secret=_TEST_SECRET):
     """Mint a well-formed token matching the safe_config fixture values."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": "jdoe",
         "iss": _TEST_ISSUER,

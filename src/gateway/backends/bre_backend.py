@@ -19,7 +19,7 @@ Terminology (vendor-neutral):
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from gateway.audit.loggers import audit_log
 from gateway.ratelimit.limiter import rate_limited
@@ -29,7 +29,7 @@ logger = logging.getLogger("enterprise-mcp-gateway.bre")
 
 @audit_log
 @rate_limited
-def bre_check_access(user_pid: str) -> Dict[str, Any]:
+def bre_check_access(user_pid: str) -> dict[str, Any]:
     """Stub - not yet implemented. Pre-check a user's BRE authorization.
 
     Returns a canned not-configured response; no BRE/RDS API call is made.
@@ -61,7 +61,7 @@ def bre_check_access(user_pid: str) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def bre_get_details(document_id: str) -> Dict[str, Any]:
+def bre_get_details(document_id: str) -> dict[str, Any]:
     """Stub - not yet implemented. Get full details for a BRE document.
 
     Returns a canned not-configured response; no BRE/RDS API call is made.
@@ -90,7 +90,7 @@ def bre_get_details(document_id: str) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def bre_get_picklists(list_name: str) -> Dict[str, Any]:
+def bre_get_picklists(list_name: str) -> dict[str, Any]:
     """Stub - not yet implemented. Get Reference Data Service picklists.
 
     Returns a canned not-configured response; no BRE/RDS API call is made.
@@ -119,7 +119,7 @@ def bre_get_picklists(list_name: str) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def bre_search(query: str, max_results: int = 20) -> Dict[str, Any]:
+def bre_search(query: str, max_results: int = 20) -> dict[str, Any]:
     """Stub - not yet implemented. Search BRE documents by criteria.
 
     Returns a canned not-configured response; no BRE/RDS API call is made.

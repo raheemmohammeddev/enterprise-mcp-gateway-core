@@ -25,9 +25,11 @@ Self-disables when NEO4J_ENABLED=false.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 from gateway.audit.loggers import audit_log
 from gateway.config.settings import (
@@ -99,7 +101,7 @@ def _apply_limit(query: str, cap: int = _DEFAULT_LIMIT) -> str:
     return f"{query.rstrip().rstrip(';')} LIMIT {cap}"
 
 
-def _check_read_only(query: str) -> Dict[str, Any]:
+def _check_read_only(query: str) -> dict[str, Any]:
     """Regex-based read-only validation shared by the Neo4j tools.
 
     Kept separate from the neo4j_validate_query tool so neo4j_run_query can
@@ -122,7 +124,7 @@ def _check_read_only(query: str) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def neo4j_get_schema(instance: Optional[str] = None) -> Dict[str, Any]:
+def neo4j_get_schema(instance: str | None = None) -> dict[str, Any]:
     """Get the graph schema (labels, relationships, property keys).
 
     Args:
@@ -169,7 +171,7 @@ def neo4j_get_schema(instance: Optional[str] = None) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def neo4j_validate_query(query: str) -> Dict[str, Any]:
+def neo4j_validate_query(query: str) -> dict[str, Any]:
     """Validate a Cypher query for read-only safety (no DB access needed).
 
     Uses regex-based detection of write keywords. Does not execute the query.
@@ -194,7 +196,7 @@ def neo4j_validate_query(query: str) -> Dict[str, Any]:
 
 @audit_log
 @rate_limited
-def neo4j_run_query(query: str, limit: int = _DEFAULT_LIMIT) -> Dict[str, Any]:
+def neo4j_run_query(query: str, limit: int = _DEFAULT_LIMIT) -> dict[str, Any]:
     """Execute a read-only Cypher query against the Neo4j knowledge graph.
 
     Enforces read-only at the gateway level (write keyword blocking) and
@@ -272,7 +274,7 @@ def _node_label(node: Any) -> str:
     return str(name) if name else ""
 
 
-def _extract_relationship_patterns(records: Iterable[Any]) -> List[Dict[str, str]]:
+def _extract_relationship_patterns(records: Iterable[Any]) -> list[dict[str, str]]:
     """Build connected (start)-[type]->(end) patterns from a result set.
 
     Args:
@@ -282,7 +284,7 @@ def _extract_relationship_patterns(records: Iterable[Any]) -> List[Dict[str, str
     Returns:
         De-duplicated pattern dicts in first-seen order.
     """
-    patterns: List[Dict[str, str]] = []
+    patterns: list[dict[str, str]] = []
     seen = set()
 
     for record in records:
@@ -303,7 +305,7 @@ def _extract_relationship_patterns(records: Iterable[Any]) -> List[Dict[str, str
     return patterns
 
 
-def _read_relationship_patterns(session: Any) -> Tuple[List[Dict[str, str]], str]:
+def _read_relationship_patterns(session: Any) -> tuple[list[dict[str, str]], str]:
     """Read relationship patterns, degrading honestly when unavailable.
 
     Args:
@@ -318,20 +320,20 @@ def _read_relationship_patterns(session: Any) -> Tuple[List[Dict[str, str]], str
     except Exception as exc:
         logger.warning("[NEO4J] %s unavailable: %s", _SCHEMA_VISUALIZATION, exc)
         return [], (
-            "Relationship patterns are unavailable: %s failed on this server "
-            "(%s)." % (_SCHEMA_VISUALIZATION, exc)
+            f"Relationship patterns are unavailable: {_SCHEMA_VISUALIZATION} "
+            f"failed on this server ({exc})."
         )
 
     patterns = _extract_relationship_patterns(records)
     if not patterns:
         return [], (
-            "Relationship patterns are empty: %s reported no connected "
-            "patterns." % _SCHEMA_VISUALIZATION
+            f"Relationship patterns are empty: {_SCHEMA_VISUALIZATION} "
+            "reported no connected patterns."
         )
     return patterns, ""
 
 
-def neo4j_schema_resource() -> Dict[str, Any]:
+def neo4j_schema_resource() -> dict[str, Any]:
     """Graph schema resource: labels, relationships, properties and patterns.
 
     Serves the same data as the neo4j_get_schema tool plus the connected
@@ -390,7 +392,7 @@ def neo4j_schema_resource() -> Dict[str, Any]:
 # MCP Prompt: Cypher Composition Guidance
 # ======================================================================
 
-def _format_schema_section(schema: Dict[str, Any]) -> str:
+def _format_schema_section(schema: dict[str, Any]) -> str:
     """Render the resource payload as the schema section of the prompt.
 
     Args:
@@ -402,9 +404,8 @@ def _format_schema_section(schema: Dict[str, Any]) -> str:
     """
     if schema.get("error"):
         return (
-            "Live schema unavailable (%s). Do not guess labels or "
-            "relationship types; ask the caller to confirm them."
-            % schema["error"]
+            f"Live schema unavailable ({schema['error']}). Do not guess labels "
+            "or relationship types; ask the caller to confirm them."
         )
 
     lines = ["Live schema of the connected graph:"]
@@ -415,10 +416,10 @@ def _format_schema_section(schema: Dict[str, Any]) -> str:
     if patterns:
         lines.append("- Relationship patterns:")
         for pattern in patterns:
-            lines.append(
-                "  (:%s)-[:%s]->(:%s)"
-                % (pattern.get("start", ""), pattern.get("type", ""), pattern.get("end", ""))
-            )
+            start = pattern.get("start", "")
+            rel_type = pattern.get("type", "")
+            end = pattern.get("end", "")
+            lines.append(f"  (:{start})-[:{rel_type}]->(:{end})")
     else:
         lines.append(
             "- Relationship patterns: none available, so do not assume any "
@@ -427,7 +428,7 @@ def _format_schema_section(schema: Dict[str, Any]) -> str:
 
     notes = schema.get("notes")
     if notes:
-        lines.append("- Note: %s" % notes)
+        lines.append(f"- Note: {notes}")
 
     return "\n".join(lines)
 
@@ -477,19 +478,77 @@ def cypher_query_guidance(question: str) -> Any:
         "Compose a read-only Cypher query for the knowledge graph this MCP "
         "gateway exposes.\n\n"
         "Question to answer:\n"
-        "%s\n\n"
-        "%s\n\n"
+        f"{question}\n\n"
+        f"{schema_section}\n\n"
         "Constraints the gateway enforces on every query:\n"
         "- Read-only: CREATE, MERGE, SET, DELETE, DETACH, REMOVE, DROP and "
         "CALL dbms are blocked and the call is rejected before it reaches "
         "the database.\n"
         "- A LIMIT clause is injected automatically when the query lacks "
-        "one, and the effective cap is at most %d rows.\n"
+        f"one, and the effective cap is at most {_MAX_LIMIT} rows.\n"
         "- Use only the relationship types and directions listed above; do "
         "not invent relationships.\n"
         "- Match on explicit labels and return named columns.\n\n"
-        "Return the Cypher query only." % (question, schema_section, _MAX_LIMIT)
+        "Return the Cypher query only."
     )
+
+
+# ======================================================================
+# MCP Registration Adapters
+# ======================================================================
+#
+# FastMCP serializes a dict return value for a tool, but the resource and
+# prompt layers do not: Resource contents must be str, bytes or
+# list[ResourceContent], and a prompt must render to text. Registering the
+# dict-returning handlers directly made resources/read fail on every call and
+# made prompts/get fail whenever the guardrail pipeline returned its block
+# dict. These adapters do the JSON serialization at the protocol boundary so
+# the handlers keep returning the dicts the rest of the gateway and the tests
+# consume, and so a guardrail denial reaches the caller as the same
+# {"error": ..., "guardrail": ...} payload a denied tool returns.
+
+
+def _schema_resource_json() -> str:
+    """Graph schema resource: labels, relationships, properties and patterns.
+
+    Serves the same data as the neo4j_get_schema tool plus the connected
+    relationship patterns the flat tool output omits, which is what lets a
+    model avoid inventing relationship types.
+
+    Authorization: identical to neo4j_get_schema, enforced before any driver
+    work, so a caller denied that tool is denied this resource.
+
+    Returns:
+        The neo4j_schema_resource() payload as a JSON document, matching the
+        advertised application/json mime type. A guardrail block or a
+        neo4j_disabled / neo4j_unavailable / neo4j_error condition is carried
+        through unchanged as that same JSON object.
+    """
+    return json.dumps(neo4j_schema_resource(), indent=2)
+
+
+def _cypher_prompt_text(question: str) -> str:
+    """Guidance for composing a read-only Cypher query for this graph.
+
+    Embeds the live schema (labels plus connected relationship patterns) and
+    the constraints the gateway actually enforces, so the model composes a
+    query that passes validation instead of one that has to be retried.
+
+    Authorization: the prompt authorizes against neo4j_validate_query as the
+    least-privilege match, and the live schema it embeds is only included
+    when the caller is also authorized for neo4j_get_schema.
+
+    Args:
+        question: The question the Cypher query must answer.
+
+    Returns:
+        The guidance text, or a guardrail denial rendered as a JSON object
+        with the same error and guardrail keys a denied tool returns.
+    """
+    guidance = cypher_query_guidance(question)
+    if isinstance(guidance, dict):
+        return json.dumps(guidance, indent=2)
+    return guidance
 
 
 def register(mcp: Any) -> None:
@@ -508,8 +567,12 @@ def register(mcp: Any) -> None:
     mcp.tool()(neo4j_get_schema)
     mcp.tool()(neo4j_validate_query)
     mcp.tool()(neo4j_run_query)
-    mcp.resource(SCHEMA_RESOURCE_URI, mime_type="application/json")(neo4j_schema_resource)
-    mcp.prompt(name=CYPHER_PROMPT_NAME)(cypher_query_guidance)
+    mcp.resource(
+        SCHEMA_RESOURCE_URI,
+        name="neo4j_schema_resource",
+        mime_type="application/json",
+    )(_schema_resource_json)
+    mcp.prompt(name=CYPHER_PROMPT_NAME)(_cypher_prompt_text)
     logger.info(
         "[NEO4J] Registered 3 Neo4j Knowledge Graph tools (read-only), "
         "1 resource (%s) and 1 prompt (%s)",

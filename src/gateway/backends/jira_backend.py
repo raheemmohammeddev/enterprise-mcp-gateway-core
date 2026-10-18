@@ -16,12 +16,12 @@ All tools are wrapped with the standard decorator composition order:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
 from gateway.audit.loggers import jira_audited
-from gateway.config.settings import JIRA_BASE_URL, JIRA_BACKEND, JIRA_PAT
+from gateway.config.settings import JIRA_BACKEND, JIRA_BASE_URL, JIRA_PAT
 from gateway.ratelimit.limiter import rate_limited
 
 logger = logging.getLogger("enterprise-mcp-gateway.jira")
@@ -30,7 +30,7 @@ logger = logging.getLogger("enterprise-mcp-gateway.jira")
 _JIRA_TIMEOUT = 30
 
 
-def _get_auth_headers() -> Dict[str, str]:
+def _get_auth_headers() -> dict[str, str]:
     """Build authentication headers based on configured backend mode.
 
     Returns:
@@ -41,7 +41,7 @@ def _get_auth_headers() -> Dict[str, str]:
     return {"Content-Type": "application/json"}
 
 
-def _jira_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _jira_get(endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     """Execute a GET request against the Jira REST API.
 
     Args:
@@ -58,14 +58,20 @@ def _jira_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[st
             resp.raise_for_status()
             return resp.json()
     except httpx.TimeoutException:
-        return {"error": "jira_timeout", "message": f"Jira request timed out after {_JIRA_TIMEOUT}s"}
+        return {
+            "error": "jira_timeout",
+            "message": f"Jira request timed out after {_JIRA_TIMEOUT}s",
+        }
     except httpx.HTTPStatusError as exc:
-        return {"error": "jira_http_error", "message": f"Jira returned HTTP {exc.response.status_code}"}
+        return {
+            "error": "jira_http_error",
+            "message": f"Jira returned HTTP {exc.response.status_code}",
+        }
     except Exception as exc:
         return {"error": "jira_error", "message": str(exc)}
 
 
-def _jira_post(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _jira_post(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Execute a POST request against the Jira REST API.
 
     Args:
@@ -82,9 +88,15 @@ def _jira_post(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             resp.raise_for_status()
             return resp.json() if resp.content else {"success": True}
     except httpx.TimeoutException:
-        return {"error": "jira_timeout", "message": f"Jira request timed out after {_JIRA_TIMEOUT}s"}
+        return {
+            "error": "jira_timeout",
+            "message": f"Jira request timed out after {_JIRA_TIMEOUT}s",
+        }
     except httpx.HTTPStatusError as exc:
-        return {"error": "jira_http_error", "message": f"Jira returned HTTP {exc.response.status_code}"}
+        return {
+            "error": "jira_http_error",
+            "message": f"Jira returned HTTP {exc.response.status_code}",
+        }
     except Exception as exc:
         return {"error": "jira_error", "message": str(exc)}
 
@@ -95,7 +107,7 @@ def _jira_post(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @jira_audited
 @rate_limited
-def get_jira_issues(jql: str, max_results: int = 20) -> Dict[str, Any]:
+def get_jira_issues(jql: str, max_results: int = 20) -> dict[str, Any]:
     """Search Jira issues by JQL query.
 
     Args:
@@ -120,7 +132,7 @@ def get_jira_issues(jql: str, max_results: int = 20) -> Dict[str, Any]:
 
 @jira_audited
 @rate_limited
-def jira_get_issue_details(issue_key: str) -> Dict[str, Any]:
+def jira_get_issue_details(issue_key: str) -> dict[str, Any]:
     """Get full details for a Jira issue by key.
 
     Args:
@@ -146,7 +158,7 @@ def jira_get_issue_details(issue_key: str) -> Dict[str, Any]:
 def jira_create_issue(
     project: str, summary: str, issue_type: str = "Task",
     description: str = "", assignee: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a new Jira issue.
 
     Args:
@@ -172,7 +184,7 @@ def jira_create_issue(
     if block:
         return block
 
-    fields: Dict[str, Any] = {
+    fields: dict[str, Any] = {
         "project": {"key": project},
         "summary": summary,
         "issuetype": {"name": issue_type},
@@ -187,7 +199,7 @@ def jira_create_issue(
 
 @jira_audited
 @rate_limited
-def jira_add_comment(issue_key: str, comment: str) -> Dict[str, Any]:
+def jira_add_comment(issue_key: str, comment: str) -> dict[str, Any]:
     """Add a comment to a Jira issue.
 
     Args:

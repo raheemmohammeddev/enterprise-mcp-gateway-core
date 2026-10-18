@@ -21,7 +21,6 @@ Configuration groups:
 from __future__ import annotations
 
 import os
-from typing import List
 
 from dotenv import load_dotenv
 
@@ -41,7 +40,7 @@ def _int(key: str, default: int) -> int:
         return default
 
 
-def _list(key: str, default: str = "") -> List[str]:
+def _list(key: str, default: str = "") -> list[str]:
     """Read an env var as a comma-separated list, stripping whitespace."""
     raw = os.getenv(key, default)
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -92,7 +91,7 @@ JWT_AUTH_ENABLED: bool = _bool("JWT_AUTH_ENABLED", False)
 JWT_SECRET: str = os.getenv("JWT_SECRET", "")
 # Single key family only. Mixing HMAC and RSA algorithms in one accept-list
 # enables algorithm-confusion attacks; there is no JWKS/kid support here.
-JWT_ALGORITHMS: List[str] = _list("JWT_ALGORITHMS", "HS512")
+JWT_ALGORITHMS: list[str] = _list("JWT_ALGORITHMS", "HS512")
 JWT_VERIFY_AUD: bool = _bool("JWT_VERIFY_AUD", True)
 JWT_AUDIENCE: str = os.getenv("JWT_AUDIENCE", "")
 JWT_ISSUER: str = os.getenv("JWT_ISSUER", "")
@@ -101,7 +100,7 @@ JWT_CLAIM_USER_ID: str = os.getenv("JWT_CLAIM_USER_ID", "sAMAccountName,sub")
 JWT_CLAIM_USERNAME: str = os.getenv("JWT_CLAIM_USERNAME", "preferred_username,name")
 JWT_CLAIM_EMAIL: str = os.getenv("JWT_CLAIM_EMAIL", "email")
 JWT_CLAIM_GROUPS: str = os.getenv("JWT_CLAIM_GROUPS", "groups,roles")
-JWT_REQUIRED_CONSUMER_TYPES: List[str] = _list("JWT_REQUIRED_CONSUMER_TYPES", "ai-agent")
+JWT_REQUIRED_CONSUMER_TYPES: list[str] = _list("JWT_REQUIRED_CONSUMER_TYPES", "ai-agent")
 
 # ======================================================================
 # Kiro RBAC (Gateway-signed tokens for IDE consumers)
@@ -144,7 +143,7 @@ CACHE_TTL_SECONDS: int = _int("CACHE_TTL_SECONDS", 300)
 # Write Authorization
 # ======================================================================
 USER_WRITE_AUTH_ENABLED: bool = _bool("USER_WRITE_AUTH_ENABLED", True)
-WRITE_AD_GROUPS: List[str] = _list("WRITE_AD_GROUPS", "Platform-Admin,Platform-Write-Dev")
+WRITE_AD_GROUPS: list[str] = _list("WRITE_AD_GROUPS", "Platform-Admin,Platform-Write-Dev")
 
 # ======================================================================
 # Feature Flags
